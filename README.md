@@ -1,4 +1,4 @@
-# Arcs Rankings
+# Arcs Ranked
 
 A card statistics tracker for the board game Arcs, showing win rates and pick data for Leaders and Lore cards.
 
@@ -18,4 +18,4 @@ A card statistics tracker for the board game Arcs, showing win rates and pick da
 
 ## Live Site
 
-https://laurens1234.github.io/arcs-rankings/
+https://laurens1234.github.io/arcs-ranked/
