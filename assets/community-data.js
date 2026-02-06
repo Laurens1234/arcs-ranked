@@ -11,7 +11,7 @@ export const COMMUNITY_DATA = {
       "Quartermaster", "Mystic", "Anarchist", "Hidden Harbors", "Galactic Rifles",
       "Warrior", "Repair Drones", "Elder", "Upstart", "Feastbringer",
       "Gate Ports", "Mirror Plating", "Overseer", "Empath's Bond", "Demagogue",
-      "Agitator", "Empath's Vision", "Seeker Torpedoes", "Tool Priests",
+      "Agitator", "Empath's Vision", "Seeker Torpedoes", "Tool-Priests",
       "Gate Stations", "Railgun Arrays", "Predictive Sensors", "Corsair",
       "Warlord's Terror", "Tyrant's Authority", "Keeper's Solidarity", "Fuel-Drinker",
       "Tycoon's Charm", "Tycoon's Ambition", "Warlord's Cruelty", "Shaper",
@@ -26,7 +26,7 @@ export const COMMUNITY_DATA = {
     },
     loreWinrates: {
       "Living Structures": 54, "Sprinter Drives": 47, "Repair Drones": 42,
-      "Empath's Bond": 39, "Tyrant's Authority": 38, "Tool Priests": 37,
+      "Empath's Bond": 39, "Tyrant's Authority": 38, "Tool-Priests": 37,
       "Seeker Torpedoes": 35, "Hidden Harbors": 35, "Warlord's Terror": 35,
       "Empath's Vision": 35, "Tycoon's Ambition": 34, "Railgun Arrays": 33,
       "Signal Breaker": 32, "Ancient Holdings": 32, "Gate Stations": 31,
@@ -42,7 +42,7 @@ export const COMMUNITY_DATA = {
     ranking: [
       "Living Structures", "Noble", "Quartermaster", "Anarchist", "Sprinter Drives",
       "Archivist", "Feastbringer", "Demagogue", "Hidden Harbors", "Mystic",
-      "Rebel", "Tool Priests", "Galactic Rifles", "Overseer", "Repair Drones",
+      "Rebel", "Tool-Priests", "Galactic Rifles", "Overseer", "Repair Drones",
       "Elder", "Seeker Torpedoes", "Gate Ports", "Warrior", "Fuel-Drinker",
       "Mirror Plating", "Predictive Sensors", "Empath's Bond", "Keeper's Solidarity",
       "Railgun Arrays", "Gate Stations", "Corsair", "Upstart", "Empath's Vision",
@@ -59,7 +59,7 @@ export const COMMUNITY_DATA = {
     },
     loreWinrates: {
       "Living Structures": 37, "Sprinter Drives": 34, "Hidden Harbors": 31,
-      "Tool Priests": 30, "Galactic Rifles": 30, "Keeper's Solidarity": 29,
+      "Tool-Priests": 30, "Galactic Rifles": 30, "Keeper's Solidarity": 29,
       "Seeker Torpedoes": 27, "Railgun Arrays": 26, "Tycoon's Ambition": 26,
       "Mirror Plating": 26, "Empath's Bond": 26, "Predictive Sensors": 25,
       "Repair Drones": 25, "Tycoon's Charm": 25, "Gate Ports": 25,
