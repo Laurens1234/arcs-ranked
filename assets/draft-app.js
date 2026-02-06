@@ -525,7 +525,7 @@ function pickWithConstraint(entries, count, constraint) {
     });
   }
 
-  // "any" — no constraint, pure random
+  // "any" no constraint, pure random
   const shuffled = [...entries].sort(() => Math.random() - 0.5);
   return shuffled.slice(0, count);
 }
@@ -948,7 +948,7 @@ function renderPhaseLabel() {
   const loreLeft = draft.lorePerPlayer - player.lore.length;
   if (loreLeft > 0) needs.push(`Lore (${loreLeft} left)`);
   const pickNum = draft.history.length + 1;
-  el.draftPhaseLabel.innerHTML = `Pick #${pickNum} — <strong>Player ${drafter}${isYou ? " (You)" : ""}</strong> · Needs: ${needs.join(", ")}`;
+  el.draftPhaseLabel.innerHTML = `Pick #${pickNum} <strong>Player ${drafter}${isYou ? " (You)" : ""}</strong> · Needs: ${needs.join(", ")}`;
 }
 
 function renderPlayerBoards() {
