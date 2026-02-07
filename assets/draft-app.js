@@ -320,17 +320,39 @@ function parseTierData(rows, cards) {
 
   let inLore = false;
   let headerSkipped = false;
+  let emptyRowCount = 0;
 
   for (const row of rows) {
-    const name = (row[0] ?? "").trim();
-    const tier = (row[1] ?? "").trim().toUpperCase();
+    let name, tier;
+
+    if (row.length === 1) {
+      // Single column: "Name,Tier"
+      const cell = (row[0] ?? "").trim();
+      if (cell.includes(",")) {
+        [name, tier] = cell.split(",", 2).map(s => s.trim());
+      } else {
+        name = cell;
+        tier = "";
+      }
+    } else {
+      // Two columns: Name | Tier
+      name = (row[0] ?? "").trim();
+      tier = (row[1] ?? "").trim();
+    }
+    tier = tier.toUpperCase();
 
     if (!headerSkipped && normalizeText(name) === "name") {
       headerSkipped = true;
       continue;
     }
     if (!name && !tier) {
-      if (headerSkipped && leaders.length > 0) inLore = true;
+      emptyRowCount++;
+      if (headerSkipped && leaders.length > 0 && emptyRowCount === 1) {
+        inLore = true;
+      } else if (emptyRowCount >= 2) {
+        // Stop after second empty row (base court separator)
+        break;
+      }
       continue;
     }
     if (!name || !tier) continue;
@@ -912,7 +934,7 @@ function generateBalancedDraft() {
   }
 
   draft.active = false;
-  el.undoBtn.disabled = false;
+  el.undoBtn.disabled = true;
   renderDraft();
 
   // Scroll to the draft panel

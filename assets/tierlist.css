@@ -66,6 +66,10 @@
   align-content: center;
 }
 
+.edit-mode .personal-tier-cards {
+  gap: 2px;
+}
+
 .personal-tier-card {
   position: relative;
   width: 120px;
@@ -83,10 +87,30 @@
   z-index: 10;
 }
 
+.personal-tier-card.drag-over {
+  border: 3px solid var(--accent);
+  box-shadow: 0 0 20px var(--accent-glow);
+  transform: scale(1.02);
+}
+
+/* Original dragging style - now consolidated below */
+.personal-tier-card.dragging {
+  opacity: 0.4;
+  transform: scale(0.95);
+}
+
+.touch-drag-clone {
+  opacity: 0.7 !important;
+  transform: rotate(5deg) scale(1.05) !important;
+  box-shadow: 0 8px 25px rgba(0,0,0,0.5) !important;
+  transition: none !important;
+}
+
 .personal-tier-card img {
   width: 100%;
   height: auto;
   display: block;
+  object-fit: contain;
 }
 
 .personal-tier-card-name {
@@ -109,6 +133,24 @@
 
 .personal-tier-card:hover .personal-tier-card-name {
   opacity: 1;
+}
+
+.card-drop-zone {
+  width: 12px;
+  height: 120px;
+  background: transparent;
+  border: 2px dashed transparent;
+  border-radius: var(--radius-sm);
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+  margin: 0 1px;
+}
+
+.card-drop-zone.drag-over {
+  background: var(--accent);
+  border-color: var(--accent);
+  opacity: 0.8;
+  width: 16px;
 }
 
 /* Loading skeleton */
@@ -142,8 +184,12 @@
   }
 
   .personal-tier-cards {
-    gap: 6px;
+    gap: 4px;
     padding: 8px;
+  }
+
+  .edit-mode .personal-tier-cards {
+    gap: 2px;
   }
 }
 
@@ -183,6 +229,13 @@
 .personal-tier-card.dragging {
   opacity: 0.4;
   transform: scale(0.95);
+}
+
+.touch-drag-clone {
+  opacity: 0.7 !important;
+  transform: rotate(5deg) scale(1.05) !important;
+  box-shadow: 0 8px 25px rgba(0,0,0,0.5) !important;
+  transition: none !important;
 }
 
 .edit-active-indicator {
