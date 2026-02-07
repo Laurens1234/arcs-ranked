@@ -121,6 +121,14 @@
                 <button class="btn-option" data-value="4">4</button>
               </div>
             </div>
+            <!-- Draft Order -->
+            <div class="setup-group">
+              <label class="setup-label">Draft Order</label>
+              <div class="btn-group" id="draftOrderGroup">
+                <button class="btn-option active" data-value="descending">Descending (3→2→1…)</button>
+                <button class="btn-option" data-value="snake">Snake (3→2→1→1→2→3…)</button>
+              </div>
+            </div>
             <!-- Your Seat -->
             <div class="setup-group">
               <label class="setup-label">Your Seat</label>
@@ -247,6 +255,7 @@
 
           <div class="setup-actions">
             <button id="startDraft" class="btn-primary" disabled>Start Draft</button>
+            <button id="simulateDrafts" class="btn-secondary" style="margin-left:12px">Simulate Drafts & Export CSV</button>
           </div>
         </div>
 
