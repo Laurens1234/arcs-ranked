@@ -601,13 +601,16 @@ function moveCard(name, newTier, type, insertBefore = null) {
   // Determine insertion position
   let insertIndex;
   
-  if (oldTier === newTier && insertBefore !== null) {
-    // Moving within same tier
+  if (insertBefore !== null) {
+    // Specific position requested - find it regardless of tier
     const targetIndex = entries.findIndex((e) => e.name === insertBefore);
     if (targetIndex !== -1) {
       insertIndex = targetIndex;
+      // Update tier to match the tier of the card we're inserting before
+      entry.tier = entries[targetIndex].tier;
     } else {
-      // insertBefore not found, insert at end of tier
+      // insertBefore not found, insert at end of requested tier
+      entry.tier = newTier;
       insertIndex = entries.length;
       for (let i = entries.length - 1; i >= 0; i--) {
         if (entries[i].tier === newTier) {
@@ -617,9 +620,8 @@ function moveCard(name, newTier, type, insertBefore = null) {
       }
     }
   } else {
-    // Moving to different tier or no specific position
+    // No specific position - add to end of new tier
     entry.tier = newTier;
-    // Find the last card in the new tier to insert after
     insertIndex = entries.length;
     for (let i = entries.length - 1; i >= 0; i--) {
       if (entries[i].tier === newTier) {
