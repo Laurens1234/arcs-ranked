@@ -8,8 +8,10 @@ const el = {
   status: document.getElementById("status"),
   leadersTierList: document.getElementById("leadersTierList"),
   loreTierList: document.getElementById("loreTierList"),
+  basecourtTierList: document.getElementById("basecourtTierList"),
   leadersSection: document.getElementById("leadersSection"),
   loreSection: document.getElementById("loreSection"),
+  basecourtSection: document.getElementById("basecourtSection"),
   tabs: document.querySelectorAll(".tab"),
   themeToggle: document.getElementById("themeToggle"),
   downloadBtn: document.getElementById("downloadBtn"),
@@ -44,8 +46,17 @@ const el = {
 let editMode = false;
 let leaderEntries = []; // current leader entries (mutable in edit mode)
 let loreEntries = [];   // current lore entries (mutable in edit mode)
+let basecourtEntries = []; // current base court entries (mutable in edit mode)
 let allCards = [];       // loaded card data
 let hiddenTiers = new Set(); // tiers the user has removed
+
+// Touch drag and drop state
+let touchDraggedElement = null;
+let touchDraggedData = null;
+let touchDraggedClone = null;
+let touchStartX = 0;
+let touchStartY = 0;
+let touchMoved = false;
 
 // ========== Utilities ==========
 function setStatus(msg, { isError = false } = {}) {
@@ -113,6 +124,43 @@ async function loadCards() {
     }));
 }
 
+// Global touch cleanup
+document.addEventListener("touchend", () => {
+  if (touchDraggedElement) {
+    document.querySelectorAll('.drag-over').forEach(el => {
+      el.classList.remove('drag-over');
+    });
+    
+    // Clean up clone
+    if (touchDraggedClone && touchDraggedClone.parentNode) {
+      touchDraggedClone.parentNode.removeChild(touchDraggedClone);
+    }
+    
+    touchDraggedElement = null;
+    touchDraggedData = null;
+    touchDraggedClone = null;
+    touchMoved = false;
+  }
+});
+
+document.addEventListener("touchcancel", () => {
+  if (touchDraggedElement) {
+    document.querySelectorAll('.drag-over').forEach(el => {
+      el.classList.remove('drag-over');
+    });
+    
+    // Clean up clone
+    if (touchDraggedClone && touchDraggedClone.parentNode) {
+      touchDraggedClone.parentNode.removeChild(touchDraggedClone);
+    }
+    
+    touchDraggedElement = null;
+    touchDraggedData = null;
+    touchDraggedClone = null;
+    touchMoved = false;
+  }
+});
+
 async function loadTierListSheet() {
   const text = await fetchText(CONFIG.tierListCsvUrl);
   const parsed = Papa.parse(text, { header: false, skipEmptyLines: false });
@@ -120,12 +168,13 @@ async function loadTierListSheet() {
 }
 
 function parseTierListSheet(rows, cards) {
-  // Sheet format: Name | Tier
-  // Empty row separates leaders from lore
-  // First row is header (Name, Tier)
+  // Sheet format: Name | Tier  OR  "Name,Tier" in single column
+  // Empty rows separate leaders, lore, and base court
+  // First row is header (Name, Tier) or (Name,Tier)
   const leaders = [];
   const lore = [];
-  let inLore = false;
+  const basecourt = [];
+  let section = 0; // 0 = leaders, 1 = lore, 2 = base court
   let headerSkipped = false;
 
   // Build a lookup map: normalized name → card
@@ -135,8 +184,23 @@ function parseTierListSheet(rows, cards) {
   }
 
   for (const row of rows) {
-    const name = (row[0] ?? "").trim();
-    const tier = (row[1] ?? "").trim().toUpperCase();
+    let name, tier;
+
+    if (row.length === 1) {
+      // Single column: "Name,Tier"
+      const cell = (row[0] ?? "").trim();
+      if (cell.includes(",")) {
+        [name, tier] = cell.split(",", 2).map(s => s.trim());
+      } else {
+        name = cell;
+        tier = "";
+      }
+    } else {
+      // Two columns: Name | Tier
+      name = (row[0] ?? "").trim();
+      tier = (row[1] ?? "").trim();
+    }
+    tier = tier.toUpperCase();
 
     // Skip header row
     if (!headerSkipped) {
@@ -146,10 +210,11 @@ function parseTierListSheet(rows, cards) {
       }
     }
 
-    // Empty row = separator between leaders and lore
+    // Empty row = separator between sections
     if (!name && !tier) {
-      if (headerSkipped && leaders.length > 0) {
-        inLore = true;
+      if (headerSkipped) {
+        section++;
+        if (section > 2) break; // Stop after base court section
       }
       continue;
     }
@@ -163,14 +228,16 @@ function parseTierListSheet(rows, cards) {
       card: card ?? null,
     };
 
-    if (inLore) {
-      lore.push(entry);
-    } else {
+    if (section === 0) {
       leaders.push(entry);
+    } else if (section === 1) {
+      lore.push(entry);
+    } else if (section === 2) {
+      basecourt.push(entry);
     }
   }
 
-  return { leaders, lore };
+  return { leaders, lore, basecourt };
 }
 
 // ========== Rendering ==========
@@ -232,16 +299,58 @@ function buildTierListHTML(entries, container, type) {
     cardsDiv.addEventListener("drop", (e) => {
       if (!editMode) return;
       e.preventDefault();
+      e.stopPropagation();
       cardsDiv.classList.remove("drag-over");
       const cardName = e.dataTransfer.getData("text/plain");
       const srcType = e.dataTransfer.getData("application/x-type");
       if (srcType !== type) return; // don't mix leaders/lore
+      
+      // Check if dropping on a card or drop zone
+      const target = e.target.closest('.personal-tier-card, .card-drop-zone');
+      if (target) {
+        // Already handled by individual card/zone handlers
+        return;
+      }
+      
+      // Dropping on empty space in the tier - add to end
       moveCard(cardName, tier, type);
     });
 
-    for (const entry of items) {
+    for (let i = 0; i < items.length; i++) {
+      const entry = items[i];
       const cardEl = createCardElement(entry, type);
       cardsDiv.appendChild(cardEl);
+      
+      // Add drop zone after each card (except the last one) in edit mode
+      if (editMode && i < items.length - 1) {
+        const dropZone = document.createElement("div");
+        dropZone.className = "card-drop-zone";
+        dropZone.dataset.insertBefore = items[i + 1].name;
+        dropZone.dataset.tier = tier;
+        dropZone.dataset.type = type;
+        
+        dropZone.addEventListener("dragover", (e) => {
+          if (!editMode) return;
+          e.preventDefault();
+          dropZone.classList.add("drag-over");
+        });
+        dropZone.addEventListener("dragleave", () => {
+          dropZone.classList.remove("drag-over");
+        });
+        dropZone.addEventListener("drop", (e) => {
+          if (!editMode) return;
+          e.preventDefault();
+          e.stopPropagation();
+          dropZone.classList.remove("drag-over");
+          const cardName = e.dataTransfer.getData("text/plain");
+          const srcType = e.dataTransfer.getData("application/x-type");
+          if (srcType !== type) return; // don't mix leaders/lore
+          const insertBefore = dropZone.dataset.insertBefore;
+          moveCard(cardName, tier, type, insertBefore);
+        });
+        
+        cardsDiv.appendChild(dropZone);
+      }
     }
 
     row.appendChild(label);
@@ -289,6 +398,140 @@ function createCardElement(entry, type) {
   });
   cardEl.addEventListener("dragend", () => {
     cardEl.classList.remove("dragging");
+  });
+  
+  // Touch drag support for mobile devices
+  cardEl.addEventListener("touchstart", (e) => {
+    if (!editMode) return;
+    touchStartX = e.touches[0].clientX;
+    touchStartY = e.touches[0].clientY;
+    touchMoved = false;
+    touchDraggedElement = cardEl;
+    touchDraggedData = {
+      name: entry.name,
+      type: type
+    };
+    
+    // Create visual clone for drag feedback
+    touchDraggedClone = cardEl.cloneNode(true);
+    touchDraggedClone.className = "personal-tier-card touch-drag-clone";
+    touchDraggedClone.style.position = "fixed";
+    touchDraggedClone.style.pointerEvents = "none";
+    touchDraggedClone.style.zIndex = "1000";
+    touchDraggedClone.style.opacity = "0.7";
+    touchDraggedClone.style.transform = "rotate(5deg) scale(1.05)";
+    touchDraggedClone.style.left = `${touchStartX - cardEl.offsetWidth / 2}px`;
+    touchDraggedClone.style.top = `${touchStartY - cardEl.offsetHeight / 2}px`;
+    document.body.appendChild(touchDraggedClone);
+    
+    // Prevent scrolling while touching
+    e.preventDefault();
+  }, { passive: false });
+  
+  cardEl.addEventListener("touchmove", (e) => {
+    if (!editMode || !touchDraggedElement || !touchDraggedClone) return;
+    
+    const touchX = e.touches[0].clientX;
+    const touchY = e.touches[0].clientY;
+    const deltaX = Math.abs(touchX - touchStartX);
+    const deltaY = Math.abs(touchY - touchStartY);
+    
+    // Only start dragging if moved more than 10px (to distinguish from tap)
+    if (deltaX > 10 || deltaY > 10) {
+      touchMoved = true;
+      
+      // Move the clone to follow the finger
+      touchDraggedClone.style.left = `${touchX - touchDraggedElement.offsetWidth / 2}px`;
+      touchDraggedClone.style.top = `${touchY - touchDraggedElement.offsetHeight / 2}px`;
+      
+      // Find element under touch
+      const elementAtPoint = document.elementFromPoint(touchX, touchY);
+      if (elementAtPoint) {
+        // Clear previous drag-over states
+        document.querySelectorAll('.drag-over').forEach(el => {
+          el.classList.remove('drag-over');
+        });
+        
+        // Check if we're over a valid drop target
+        const cardTarget = elementAtPoint.closest('.personal-tier-card');
+        const dropZoneTarget = elementAtPoint.closest('.card-drop-zone');
+        const tierTarget = elementAtPoint.closest('.personal-tier-cards');
+        
+        if (cardTarget && cardTarget !== touchDraggedElement) {
+          cardTarget.classList.add('drag-over');
+        } else if (dropZoneTarget) {
+          dropZoneTarget.classList.add('drag-over');
+        } else if (tierTarget) {
+          tierTarget.classList.add('drag-over');
+        }
+      }
+    }
+    
+    e.preventDefault();
+  }, { passive: false });
+  
+  cardEl.addEventListener("touchend", (e) => {
+    if (!editMode || !touchDraggedElement) return;
+    
+    // Clear drag-over states
+    document.querySelectorAll('.drag-over').forEach(el => {
+      el.classList.remove('drag-over');
+    });
+    
+    if (touchMoved && touchDraggedClone) {
+      const touchX = e.changedTouches[0].clientX;
+      const touchY = e.changedTouches[0].clientY;
+      
+      // Find element under touch end point
+      const elementAtPoint = document.elementFromPoint(touchX, touchY);
+      if (elementAtPoint) {
+        const cardTarget = elementAtPoint.closest('.personal-tier-card');
+        const dropZoneTarget = elementAtPoint.closest('.card-drop-zone');
+        const tierTarget = elementAtPoint.closest('.personal-tier-cards');
+        
+        if (cardTarget && cardTarget !== touchDraggedElement) {
+          // Drop on card - insert before it
+          moveCard(touchDraggedData.name, cardTarget.closest('.personal-tier-cards').dataset.tier, touchDraggedData.type, cardTarget.dataset.name);
+        } else if (dropZoneTarget) {
+          // Drop on drop zone
+          moveCard(touchDraggedData.name, dropZoneTarget.dataset.tier, touchDraggedData.type, dropZoneTarget.dataset.insertBefore);
+        } else if (tierTarget) {
+          // Drop on tier container - add to end
+          moveCard(touchDraggedData.name, tierTarget.dataset.tier, touchDraggedData.type);
+        }
+      }
+    }
+    
+    // Clean up clone
+    if (touchDraggedClone && touchDraggedClone.parentNode) {
+      touchDraggedClone.parentNode.removeChild(touchDraggedClone);
+    }
+    
+    // Clean up
+    touchDraggedElement = null;
+    touchDraggedData = null;
+    touchDraggedClone = null;
+    touchMoved = false;
+  });
+  
+  // Drop target (for inserting before this card)
+  cardEl.addEventListener("dragover", (e) => {
+    if (!editMode) return;
+    e.preventDefault();
+    cardEl.classList.add("drag-over");
+  });
+  cardEl.addEventListener("dragleave", () => {
+    cardEl.classList.remove("drag-over");
+  });
+  cardEl.addEventListener("drop", (e) => {
+    if (!editMode) return;
+    e.preventDefault();
+    e.stopPropagation();
+    cardEl.classList.remove("drag-over");
+    const cardName = e.dataTransfer.getData("text/plain");
+    const srcType = e.dataTransfer.getData("application/x-type");
+    if (srcType !== type || cardName === entry.name) return; // don't mix leaders/lore or drop on self
+    moveCard(cardName, entry.tier, type, entry.name);
   });
 
   const imgUrl = entry.card ? getImageUrl(entry.card) : null;
@@ -344,11 +587,56 @@ function createCardElement(entry, type) {
   return cardEl;
 }
 
-function moveCard(name, newTier, type) {
-  const entries = type === "leaders" ? leaderEntries : loreEntries;
-  const entry = entries.find((e) => e.name === name);
-  if (!entry || entry.tier === newTier) return;
-  entry.tier = newTier;
+function moveCard(name, newTier, type, insertBefore = null) {
+  const entries = type === "leaders" ? leaderEntries : type === "lore" ? loreEntries : basecourtEntries;
+  const entryIndex = entries.findIndex((e) => e.name === name);
+  if (entryIndex === -1) return;
+  
+  const entry = entries[entryIndex];
+  const oldTier = entry.tier;
+  
+  // Remove from current position
+  entries.splice(entryIndex, 1);
+  
+  // Determine insertion position
+  let insertIndex;
+  
+  if (oldTier === newTier && insertBefore !== null) {
+    // Moving within same tier
+    const targetIndex = entries.findIndex((e) => e.name === insertBefore);
+    if (targetIndex !== -1) {
+      insertIndex = targetIndex;
+    } else {
+      // insertBefore not found, insert at end of tier
+      insertIndex = entries.length;
+      for (let i = entries.length - 1; i >= 0; i--) {
+        if (entries[i].tier === newTier) {
+          insertIndex = i + 1;
+          break;
+        }
+      }
+    }
+  } else {
+    // Moving to different tier or no specific position
+    entry.tier = newTier;
+    // Find the last card in the new tier to insert after
+    insertIndex = entries.length;
+    for (let i = entries.length - 1; i >= 0; i--) {
+      if (entries[i].tier === newTier) {
+        insertIndex = i + 1;
+        break;
+      }
+    }
+  }
+  
+  // Insert at the determined position
+  entries.splice(insertIndex, 0, entry);
+  
+  // Remove dragging class from any elements before rebuilding view
+  document.querySelectorAll('.personal-tier-card.dragging').forEach(el => {
+    el.classList.remove('dragging');
+  });
+  
   rebuildCurrentView();
 }
 
@@ -369,6 +657,9 @@ function removeTier(tier) {
   for (const e of loreEntries) {
     if (e.tier === tier) e.tier = target;
   }
+  for (const e of basecourtEntries) {
+    if (e.tier === tier) e.tier = target;
+  }
 
   hiddenTiers.add(tier);
   rebuildCurrentView();
@@ -377,6 +668,7 @@ function removeTier(tier) {
 function rebuildCurrentView() {
   buildTierListHTML(leaderEntries, el.leadersTierList, "leaders");
   buildTierListHTML(loreEntries, el.loreTierList, "lore");
+  buildTierListHTML(basecourtEntries, el.basecourtTierList, "basecourt");
 }
 
 // ========== Edit Mode ==========
@@ -390,16 +682,109 @@ function toggleEditMode() {
 }
 
 // ========== Export ==========
-function entriesToCsv(leaders, lore) {
+function entriesToCsv(leaders, lore, basecourt) {
+  const TIER_ORDER = ["SS", "S", "A", "B", "C", "D"];
+  
+  // Group leaders by tier
+  const leaderGroups = new Map();
+  for (const tier of TIER_ORDER) {
+    leaderGroups.set(tier, []);
+  }
+  for (const entry of leaders) {
+    const t = TIER_ORDER.includes(entry.tier) ? entry.tier : "D";
+    leaderGroups.get(t).push(entry);
+  }
+  
+  // Group lore by tier
+  const loreGroups = new Map();
+  for (const tier of TIER_ORDER) {
+    loreGroups.set(tier, []);
+  }
+  for (const entry of lore) {
+    const t = TIER_ORDER.includes(entry.tier) ? entry.tier : "D";
+    loreGroups.get(t).push(entry);
+  }
+  
+  // Group base court by tier
+  const basecourtGroups = new Map();
+  for (const tier of TIER_ORDER) {
+    basecourtGroups.set(tier, []);
+  }
+  for (const entry of basecourt) {
+    const t = TIER_ORDER.includes(entry.tier) ? entry.tier : "D";
+    basecourtGroups.get(t).push(entry);
+  }
+  
   let csv = "Name,Tier\n";
-  for (const e of leaders) csv += `${e.name},${e.tier}\n`;
-  csv += "\nName,Tier\n";
-  for (const e of lore) csv += `${e.name},${e.tier}\n`;
+  
+  // Export leaders by tier order
+  for (const tier of TIER_ORDER) {
+    const entries = leaderGroups.get(tier);
+    for (const entry of entries) {
+      csv += `${entry.name},${entry.tier}\n`;
+    }
+  }
+  
+  csv += "\n";
+  
+  // Export lore by tier order
+  for (const tier of TIER_ORDER) {
+    const entries = loreGroups.get(tier);
+    for (const entry of entries) {
+      csv += `${entry.name},${entry.tier}\n`;
+    }
+  }
+  
+  csv += "\n";
+  
+  // Export base court by tier order
+  for (const tier of TIER_ORDER) {
+    const entries = basecourtGroups.get(tier);
+    for (const entry of entries) {
+      csv += `${entry.name},${entry.tier}\n`;
+    }
+  }
+  
   return csv;
 }
 
+function fallbackCopyTextToClipboard(text) {
+  // Create a temporary textarea element
+  const textArea = document.createElement("textarea");
+  textArea.value = text;
+  
+  // Make it invisible but selectable
+  textArea.style.position = "fixed";
+  textArea.style.left = "-999999px";
+  textArea.style.top = "-999999px";
+  textArea.style.opacity = "0";
+  
+  document.body.appendChild(textArea);
+  
+  // Select and copy
+  textArea.focus();
+  textArea.select();
+  
+  try {
+    const successful = document.execCommand('copy');
+    if (successful) {
+      el.exportCopyBtn.textContent = "✅ Copied!";
+      setTimeout(() => { el.exportCopyBtn.textContent = "📋 Copy"; }, 1500);
+    } else {
+      el.exportCopyBtn.textContent = "❌ Failed";
+      setTimeout(() => { el.exportCopyBtn.textContent = "📋 Copy"; }, 1500);
+    }
+  } catch (err) {
+    el.exportCopyBtn.textContent = "❌ Failed";
+    setTimeout(() => { el.exportCopyBtn.textContent = "📋 Copy"; }, 1500);
+  }
+  
+  // Clean up
+  document.body.removeChild(textArea);
+}
+
 function openExportModal() {
-  el.exportText.value = entriesToCsv(leaderEntries, loreEntries);
+  el.exportText.value = entriesToCsv(leaderEntries, loreEntries, basecourtEntries);
   el.exportModal.classList.remove("hidden");
   document.body.style.overflow = "hidden";
 }
@@ -444,13 +829,14 @@ async function doImport() {
     for (const c of allCards) cardMap.set(normalizeText(c.name), c);
     const result = parseTierListSheet(rows, allCards);
 
-    if (result.leaders.length === 0 && result.lore.length === 0) {
+    if (result.leaders.length === 0 && result.lore.length === 0 && result.basecourt.length === 0) {
       alert("No valid tier data found in the input.");
       return;
     }
 
     leaderEntries = result.leaders;
     loreEntries = result.lore;
+    basecourtEntries = result.basecourt;
     rebuildCurrentView();
     closeImportModal();
   } catch (err) {
@@ -480,6 +866,7 @@ function initTabs() {
   const sections = {
     leaders: el.leadersSection,
     lore: el.loreSection,
+    basecourt: el.basecourtSection,
   };
 
   el.tabs.forEach((tab) => {
@@ -499,8 +886,20 @@ function initDownload() {
   el.downloadBtn.addEventListener("click", async () => {
     // Determine which section is visible
     const isLeaders = !el.leadersSection.classList.contains("hidden");
-    const target = isLeaders ? el.leadersTierList : el.loreTierList;
-    const label = isLeaders ? "leaders" : "lore";
+    const isLore = !el.loreSection.classList.contains("hidden");
+    const isBaseCourt = !el.basecourtSection.classList.contains("hidden");
+    
+    let target, label;
+    if (isLeaders) {
+      target = el.leadersTierList;
+      label = "leaders";
+    } else if (isLore) {
+      target = el.loreTierList;
+      label = "lore";
+    } else if (isBaseCourt) {
+      target = el.basecourtTierList;
+      label = "basecourt";
+    }
 
     el.downloadBtn.disabled = true;
     el.downloadBtn.textContent = "Capturing…";
@@ -561,10 +960,21 @@ async function init() {
 
   // Export modal
   el.exportCopyBtn.addEventListener("click", () => {
-    navigator.clipboard.writeText(el.exportText.value).then(() => {
-      el.exportCopyBtn.textContent = "✅ Copied!";
-      setTimeout(() => { el.exportCopyBtn.textContent = "📋 Copy"; }, 1500);
-    });
+    const textToCopy = el.exportText.value;
+    
+    // Try modern clipboard API first
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(textToCopy).then(() => {
+        el.exportCopyBtn.textContent = "✅ Copied!";
+        setTimeout(() => { el.exportCopyBtn.textContent = "📋 Copy"; }, 1500);
+      }).catch(() => {
+        // Fallback to older method
+        fallbackCopyTextToClipboard(textToCopy);
+      });
+    } else {
+      // Fallback for older browsers
+      fallbackCopyTextToClipboard(textToCopy);
+    }
   });
   el.exportCloseBtn.addEventListener("click", closeExportModal);
   el.exportModalClose.addEventListener("click", closeExportModal);
@@ -591,18 +1001,20 @@ async function init() {
     setStatus("Loading cards & tier list…");
     const [cards, rows] = await Promise.all([loadCards(), loadTierListSheet()]);
     allCards = cards;
-    const { leaders, lore } = parseTierListSheet(rows, cards);
+    const { leaders, lore, basecourt } = parseTierListSheet(rows, cards);
 
-    if (leaders.length === 0 && lore.length === 0) {
+    if (leaders.length === 0 && lore.length === 0 && basecourt.length === 0) {
       setStatus("No tier list data found. Check the spreadsheet.", { isError: true });
       return;
     }
 
     leaderEntries = leaders;
     loreEntries = lore;
+    basecourtEntries = basecourt;
 
     buildTierListHTML(leaderEntries, el.leadersTierList, "leaders");
     buildTierListHTML(loreEntries, el.loreTierList, "lore");
+    buildTierListHTML(basecourtEntries, el.basecourtTierList, "basecourt");
 
     setStatus("");
   } catch (err) {
