@@ -38,6 +38,7 @@ const el = {
   leaderTierConstraint: document.getElementById("leaderTierConstraint"),
   loreTierConstraint: document.getElementById("loreTierConstraint"),
   startDraft: document.getElementById("startDraft"),
+  draftOrderGroup: document.getElementById("draftOrderGroup"),
   // Draft
   draftPanel: document.getElementById("draftPanel"),
   draftPhaseLabel: document.getElementById("draftPhaseLabel"),
@@ -77,6 +78,7 @@ let draft = {
   loreTierConstraint: "any",
   leaderWeight: 3,
   loreWeight: 1,
+  draftOrder: "descending", // 'descending' or 'snake'
   // Draft state
   active: false,
   pickIndex: 0,
@@ -346,10 +348,21 @@ function parseTierData(rows, cards) {
 
 // ========== Draft Order ==========
 function buildDraftOrder(numPlayers) {
-  // Descending: N, N-1, ..., 1 repeating
-  const order = [];
-  for (let i = numPlayers; i >= 1; i--) order.push(i);
-  return order;
+  if (draft.draftOrder === "snake") {
+    // Snake: 3,2,1,1,2,3,3,2,1... for 3 players (or N..1,1..N, repeat)
+    const order = [];
+    // Repeat enough times to cover all picks (let's make a long enough pattern)
+    // Typically, the draft order is N..1,1..N,N..1,1..N,...
+    // We'll make a pattern of length 2*numPlayers
+    for (let i = numPlayers; i >= 1; i--) order.push(i);
+    for (let i = 1; i <= numPlayers; i++) order.push(i);
+    return order;
+  } else {
+    // Descending: N, N-1, ..., 1 repeating
+    const order = [];
+    for (let i = numPlayers; i >= 1; i--) order.push(i);
+    return order;
+  }
 }
 
 function getCurrentDrafter() {
@@ -359,6 +372,10 @@ function getCurrentDrafter() {
 
 // ========== Setup UI ==========
 function initSetupUI() {
+    // Draft order selector
+    setupBtnGroup(el.draftOrderGroup, (val) => {
+      draft.draftOrder = val;
+    });
   // Button groups
   setupBtnGroup(el.playerCountGroup, (val) => {
     draft.numPlayers = parseInt(val);
@@ -422,6 +439,178 @@ function initSetupUI() {
   setupBtnGroup(el.leaderTierConstraint, (val) => { draft.leaderTierConstraint = val; });
   setupBtnGroup(el.loreTierConstraint, (val) => { draft.loreTierConstraint = val; });
   el.startDraft.addEventListener("click", startDraft);
+
+  // Simulate Drafts button (only show on dev server)
+  const simBtn = document.getElementById("simulateDrafts");
+  if (simBtn) {
+    // Hide button unless running on localhost or 127.0.0.1
+    const isDev = location.hostname === "localhost" || location.hostname === "127.0.0.1";
+    if (!isDev) {
+      simBtn.style.display = "none";
+      // Optionally, return early so no event is attached
+      return;
+    }
+    simBtn.addEventListener("click", async () => {
+      const numSimulations = 100000;
+      const results = [];
+      const orders = ["descending", "snake"];
+      for (const order of orders) {
+        let sim = 0;
+        while (sim < numSimulations) {
+          const numPlayers = draft.numPlayers;
+          const leaderMax = parseInt(el.leaderPoolSize.value);
+          const loreMax = parseInt(el.lorePoolSize.value);
+          const poolLeaders = [...allLeaders].sort(() => Math.random() - 0.5).slice(0, leaderMax);
+          const poolLore = [...allLore].sort(() => Math.random() - 0.5).slice(0, loreMax);
+          assignValues(poolLeaders);
+          assignValues(poolLore);
+          // Setup draft state for simulation
+          const simDraft = {
+            numPlayers,
+            lorePerPlayer: draft.lorePerPlayer,
+            draftOrder: order,
+            pickIndex: 0,
+            order: [],
+            players: [],
+            availableLeaders: poolLeaders.map(x => ({...x})),
+            availableLore: poolLore.map(x => ({...x})),
+            history: [],
+          };
+          for (let i = 0; i < numPlayers; i++) simDraft.players.push({ leader: null, lore: [] });
+          simDraft.order = buildSimDraftOrder(numPlayers, order);
+          // Simulate draft using getBestPick logic
+          let picks = 0;
+          let completed = false;
+          while (simDraft.players.some(p => !p.leader || p.lore.length < draft.lorePerPlayer)) {
+            const drafterIdx = simDraft.order[simDraft.pickIndex % simDraft.order.length] - 1;
+            const player = simDraft.players[drafterIdx];
+            // Use getBestPick logic for this simulated player
+            function getSimPickableCards(playerIdx) {
+              const player = simDraft.players[playerIdx];
+              const cards = [];
+              if (!player.leader) {
+                for (const c of simDraft.availableLeaders) cards.push({ ...c, pickType: "leader" });
+              }
+              if (player.lore.length < simDraft.lorePerPlayer) {
+                for (const c of simDraft.availableLore) cards.push({ ...c, pickType: "lore" });
+              }
+              return cards;
+            }
+            function getSimBestPick(playerIdx) {
+              const cards = getSimPickableCards(playerIdx);
+              if (cards.length === 0) return null;
+              let competitorsForLeader = 0;
+              let competitorsForLore = 0;
+              for (let i = 0; i < simDraft.numPlayers; i++) {
+                if (i === playerIdx) continue;
+                if (!simDraft.players[i].leader) competitorsForLeader++;
+                if (simDraft.players[i].lore.length < simDraft.lorePerPlayer) competitorsForLore++;
+              }
+              const sortedLeaders = [...simDraft.availableLeaders].sort((a, b) => b.value - a.value);
+              const sortedLore = [...simDraft.availableLore].sort((a, b) => b.value - a.value);
+              let bestCard = null;
+              let bestOpportunityCost = -Infinity;
+              const picksBeforeMyNextTurn = simDraft.numPlayers - 1;
+              for (const card of cards) {
+                let opportunityCost;
+                if (card.pickType === "leader") {
+                  const cardScore = getWeightedScore(card, "leader");
+                  const leadersTakenBefore = Math.min(competitorsForLeader, picksBeforeMyNextTurn);
+                  const replacementIdx = leadersTakenBefore;
+                  if (replacementIdx < sortedLeaders.length) {
+                    const replacement = sortedLeaders[replacementIdx];
+                    opportunityCost = cardScore - getWeightedScore(replacement, "leader");
+                  } else {
+                    opportunityCost = cardScore;
+                  }
+                } else {
+                  const loreTakenBefore = Math.min(competitorsForLore, picksBeforeMyNextTurn);
+                  const cardScore = getWeightedScore(card, "lore");
+                  const replacementIdx = loreTakenBefore;
+                  if (replacementIdx < sortedLore.length) {
+                    const replacement = sortedLore[replacementIdx];
+                    opportunityCost = cardScore - getWeightedScore(replacement, "lore");
+                  } else {
+                    opportunityCost = cardScore;
+                  }
+                }
+                if (opportunityCost > bestOpportunityCost) {
+                  bestOpportunityCost = opportunityCost;
+                  bestCard = card;
+                }
+              }
+              return bestCard;
+            }
+            const best = getSimBestPick(drafterIdx);
+            if (!best) break;
+            if (best.pickType === "leader") {
+              player.leader = best;
+              simDraft.availableLeaders = simDraft.availableLeaders.filter(l => l.name !== best.name);
+            } else {
+              player.lore.push(best);
+              simDraft.availableLore = simDraft.availableLore.filter(l => l.name !== best.name);
+            }
+            simDraft.pickIndex++;
+            picks++;
+            if (picks > 100) break; // safety
+          }
+          completed = simDraft.players.every(p => p.leader && p.lore.length === draft.lorePerPlayer);
+          if (completed) {
+            for (let i = 0; i < numPlayers; i++) {
+              const p = simDraft.players[i];
+              results.push({
+                sim: sim + 1,
+                draftOrder: order,
+                player: i + 1,
+                leader: p.leader ? p.leader.name : "",
+                leaderScore: p.leader ? getWeightedScore(p.leader, "leader") : 0,
+                lore: p.lore.map(l => l.name).join(";"),
+                loreScore: p.lore.reduce((a, l) => a + getWeightedScore(l, "lore"), 0),
+                totalScore: playerTotalScore(p),
+              });
+            }
+            sim++;
+          }
+        }
+      }
+      const csv = [
+        "sim,draftOrder,player,leader,leaderScore,lore,loreScore,totalScore",
+        ...results.map(r => `${r.sim},${r.draftOrder},${r.player},${r.leader},${r.leaderScore},${r.lore},${r.loreScore},${r.totalScore}`)
+      ].join("\n");
+      const blob = new Blob([csv], { type: "text/csv" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "draft_simulation_results.csv";
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => {
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }, 100);
+    });
+  }
+
+  function shuffle(arr) {
+    for (let i = arr.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+    return arr;
+  }
+
+  function buildSimDraftOrder(numPlayers, orderType) {
+    if (orderType === "snake") {
+      const order = [];
+      for (let i = numPlayers; i >= 1; i--) order.push(i);
+      for (let i = 1; i <= numPlayers; i++) order.push(i);
+      return order;
+    } else {
+      const order = [];
+      for (let i = numPlayers; i >= 1; i--) order.push(i);
+      return order;
+    }
+  }
 
   updateDefaults();
   updateSeatButtons();
