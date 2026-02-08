@@ -1,6 +1,6 @@
 import yaml from "https://cdn.jsdelivr.net/npm/js-yaml@4.1.0/+esm";
 import Papa from "https://cdn.jsdelivr.net/npm/papaparse@5.4.1/+esm";
-import { buildCommunityStats } from "./Community-data.js";
+import { buildCommunityStats } from "./community-data.js";
 import { CONFIG } from "./config.js";
 
 // ========== DOM Elements ==========

@@ -1,7 +1,7 @@
 import { toBlob } from "https://cdn.jsdelivr.net/npm/html-to-image@1.11.11/+esm";
 import yaml from "https://cdn.jsdelivr.net/npm/js-yaml@4.1.0/+esm";
 import Papa from "https://cdn.jsdelivr.net/npm/papaparse@5.4.1/+esm";
-import { Community_DATA } from "./Community-data.js";
+import { Community_DATA } from "./community-data.js";
 import { CONFIG } from "./config.js";
 
 // ========== DOM ==========
