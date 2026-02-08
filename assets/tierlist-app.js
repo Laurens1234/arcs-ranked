@@ -22,6 +22,7 @@ const el = {
   editBtn: document.getElementById("editBtn"),
   importBtn: document.getElementById("importBtn"),
   exportBtn: document.getElementById("exportBtn"),
+  shareBtn: document.getElementById("shareBtn"),
   // Modal
   modal: document.getElementById("cardModal"),
   modalImg: document.getElementById("modalImg"),
@@ -732,6 +733,7 @@ function toggleEditMode() {
   el.editBtn.textContent = editMode ? "✅ Done" : "Edit";
   el.importBtn.style.display = editMode ? "" : "none";
   el.exportBtn.style.display = editMode ? "" : "none";
+  el.shareBtn.style.display = editMode ? "" : "none";
   // Clear visible empty tiers when entering edit mode
   if (editMode) {
     visibleEmptyTiers.clear();
@@ -917,6 +919,8 @@ async function doImport() {
     loreEntries = result.lore;
     basecourtEntries = result.basecourt;
     rebuildCurrentView();
+    // Show share button for imported tier lists
+    el.shareBtn.style.display = "";
     closeImportModal();
   } catch (err) {
     console.error(err);
@@ -1062,6 +1066,113 @@ function initDownload() {
   });
 }
 
+// ========== URL Sharing ==========
+const TIER_MAP = { 'SSS': '0', 'SS': '1', 'S': '2', 'A': '3', 'B': '4', 'C': '5', 'D': '6', 'F': '7' };
+const REVERSE_TIER_MAP = { '0': 'SSS', '1': 'SS', '2': 'S', '3': 'A', '4': 'B', '5': 'C', '6': 'D', '7': 'F' };
+
+function encodeTierListForURL(leaders3P, leaders4P, lore, basecourt) {
+  // Build card index map for compression
+  const cardIndex = new Map();
+  allCards.forEach((card, index) => {
+    cardIndex.set(card.name, index);
+  });
+  
+  // Create ultra-compact format: Section:idx(2)digit(1)idx(2)digit(1)...
+  const sections = [
+    { name: '3', data: leaders3P },
+    { name: '4', data: leaders4P },
+    { name: 'L', data: lore },
+    { name: 'B', data: basecourt }
+  ];
+  
+  const parts = [];
+  for (const section of sections) {
+    if (section.data.length > 0) {
+      let entries = '';
+      for (const entry of section.data) {
+        const index = cardIndex.get(entry.name);
+        const tierDigit = TIER_MAP[entry.tier];
+        if (index !== undefined && tierDigit) {
+          entries += index.toString().padStart(2, '0') + tierDigit;
+        }
+      }
+      
+      if (entries) {
+        parts.push(`${section.name}:${entries}`);
+      }
+    }
+  }
+  
+  return btoa(parts.join('|')).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+}
+
+function decodeTierListFromURL(encoded) {
+  try {
+    // Add back base64 padding and convert from URL-safe
+    const padded = encoded.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - encoded.length % 4) % 4);
+    const data = atob(padded);
+    const sections = data.split('|');
+    
+    const leaders3P = [];
+    const leaders4P = [];
+    const lore = [];
+    const basecourt = [];
+    
+    // Build card array for decoding
+    const cardArray = allCards;
+    
+    for (const section of sections) {
+      const [sectionName, entriesStr] = section.split(':');
+      if (!entriesStr) continue;
+      
+      let targetArray;
+      switch (sectionName) {
+        case '3': targetArray = leaders3P; break;
+        case '4': targetArray = leaders4P; break;
+        case 'L': targetArray = lore; break;
+        case 'B': targetArray = basecourt; break;
+        default: continue;
+      }
+      
+      // Parse fixed-width entries: 2 digits index + 1 digit tier
+      for (let i = 0; i < entriesStr.length; i += 3) {
+        const indexStr = entriesStr.substr(i, 2);
+        const tierDigit = entriesStr.substr(i + 2, 1);
+        const index = parseInt(indexStr, 10);
+        const tier = REVERSE_TIER_MAP[tierDigit];
+        if (!isNaN(index) && index >= 0 && index < cardArray.length && tier) {
+          const card = cardArray[index];
+          targetArray.push({ name: card.name, tier, card });
+        }
+      }
+    }
+    
+    return { leaders3P, leaders4P, lore, basecourt };
+  } catch (err) {
+    console.error('Failed to decode tier list from URL:', err);
+    return null;
+  }
+}
+
+function shareTierList() {
+  const encoded = encodeTierListForURL(leaderEntries3P, leaderEntries4P, loreEntries, basecourtEntries);
+  const url = new URL(window.location);
+  url.searchParams.set('tierlist', encoded);
+  
+  // Copy to clipboard
+  navigator.clipboard.writeText(url.toString()).then(() => {
+    alert('Shareable link copied to clipboard!');
+  }).catch(() => {
+    // Fallback: show the URL
+    alert(`Shareable link:\n${url.toString()}`);
+  });
+}
+
+async function loadDefaultTierList() {
+  const rows = await loadTierListSheet();
+  return parseTierListSheet(rows, allCards);
+}
+
 // ========== Init ==========
 async function init() {
   initTheme();
@@ -1073,6 +1184,7 @@ async function init() {
   el.editBtn.addEventListener("click", toggleEditMode);
   el.exportBtn.addEventListener("click", openExportModal);
   el.importBtn.addEventListener("click", openImportModal);
+  el.shareBtn.addEventListener("click", shareTierList);
 
   // Export modal
   el.exportCopyBtn.addEventListener("click", () => {
@@ -1115,19 +1227,40 @@ async function init() {
 
   try {
     setStatus("Loading cards & tier list…");
-    const [cards, rows] = await Promise.all([loadCards(), loadTierListSheet()]);
+    const [cards] = await Promise.all([loadCards()]);
     allCards = cards;
-    const { leaders3P, leaders4P, lore, basecourt } = parseTierListSheet(rows, cards);
 
-    if (leaders3P.length === 0 && leaders4P.length === 0 && lore.length === 0 && basecourt.length === 0) {
+    // Check for URL parameters
+    const urlParams = new URLSearchParams(window.location.search);
+    const tierlistParam = urlParams.get('tierlist');
+    
+    let tierData;
+    if (tierlistParam) {
+      // Load tier list from URL
+      tierData = decodeTierListFromURL(tierlistParam);
+      if (tierData) {
+        setStatus("Loaded tier list from URL");
+        // Show share button for shared tier lists
+        el.shareBtn.style.display = "";
+      } else {
+        setStatus("Invalid tier list in URL, loading default", { isError: true });
+        tierData = await loadDefaultTierList();
+      }
+    } else {
+      // Load default tier list
+      const rows = await loadTierListSheet();
+      tierData = parseTierListSheet(rows, cards);
+    }
+
+    if (tierData.leaders3P.length === 0 && tierData.leaders4P.length === 0 && tierData.lore.length === 0 && tierData.basecourt.length === 0) {
       setStatus("No tier list data found. Check the spreadsheet.", { isError: true });
       return;
     }
 
-    leaderEntries3P = leaders3P;
-    leaderEntries4P = leaders4P;
-    loreEntries = lore;
-    basecourtEntries = basecourt;
+    leaderEntries3P = tierData.leaders3P;
+    leaderEntries4P = tierData.leaders4P;
+    loreEntries = tierData.lore;
+    basecourtEntries = tierData.basecourt;
 
     buildTierListHTML(leaderEntries3P, el.leaders3pTierList, "leaders");
     buildTierListHTML(leaderEntries4P, el.leaders4pTierList, "leaders");

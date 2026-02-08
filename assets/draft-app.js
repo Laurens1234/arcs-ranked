@@ -1130,29 +1130,26 @@ async function generateBalancedDraft() {
   let bestLoreNames = null;
   let bestResult = null;
 
-  for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
-    // Update progress on every attempt
-    const progressText = `Generating${".".repeat((attempt % 5) + 1)}`;
-    el.balancedDraft.textContent = progressText;
-    console.log(`Attempt ${attempt + 1}/${ATTEMPTS}`);
+  let attempt = 0;
 
-    // Allow UI to update
-    if (attempt % 50 === 0) {
-      await new Promise(resolve => setTimeout(resolve, 0));
+  function performAttempt() {
+    if (attempt >= ATTEMPTS || timedOut || bestSpread <= acceptableSpread) {
+      afterLoop();
+      return;
     }
+
+    // Update progress every 10 attempts
+    if (attempt % 10 === 0) {
+      const progressText = `Generating${".".repeat((attempt / 10) % 6)}`;
+      el.balancedDraft.textContent = progressText;
+    }
+    console.log(`Attempt ${attempt + 1}/${ATTEMPTS}`);
 
     // Check for timeout
     if (Date.now() - startTime > MAX_TIME) {
       timedOut = true;
-      if (bestResult) {
-        setStatus(`Generation timed out after 10 seconds. No setup found within ${acceptableSpread} spread. Using best found (spread: ${bestSpread.toFixed(2)}).`, { isError: false });
-      } else {
-        setStatus("Generation timed out after 10 seconds. No valid setup found.", { isError: true });
-        el.balancedDraft.disabled = false;
-        el.balancedDraft.textContent = "Generate Balanced Setup";
-        return;
-      }
-      break;
+      afterLoop();
+      return;
     }
 
     // Select pools without constraints first
@@ -1160,69 +1157,83 @@ async function generateBalancedDraft() {
     const poolLore = pickWithConstraint(allLore, loreMax, "any");
 
     const result = findBestAssignment(poolLeaders, poolLore, playerLoreLimits, acceptableSpread);
-    if (!result) continue;
-
-    if (result.spread < bestSpread) {
-      bestSpread = result.spread;
-      bestLeaderNames = poolLeaders.map((c) => c.name);
-      bestLoreNames = poolLore.map((c) => c.name);
-      bestResult = result.assignment;
+    if (result) {
+      if (result.spread < bestSpread) {
+        bestSpread = result.spread;
+        bestLeaderNames = poolLeaders.map((c) => c.name);
+        bestLoreNames = poolLore.map((c) => c.name);
+        bestResult = result.assignment;
+      }
     }
 
-    if (bestSpread <= acceptableSpread) break;
+    attempt++;
+    setTimeout(performAttempt, 0);
   }
 
-  if (!bestResult) {
-    // No valid setup found after all attempts
-    setStatus("Could not find a balanced setup with the given constraints. Try relaxing the settings.", { isError: true });
+  function afterLoop() {
+    if (timedOut && bestResult) {
+      setStatus(`Generation timed out after 10 seconds. No setup found within ${acceptableSpread} spread. Using best found (spread: ${bestSpread.toFixed(2)}).`, { isError: false });
+    } else if (timedOut) {
+      setStatus("Generation timed out after 10 seconds. No valid setup found.", { isError: true });
+      el.balancedDraft.disabled = false;
+      el.balancedDraft.textContent = "Generate Balanced Setup";
+      return;
+    }
+
+    if (!bestResult) {
+      // No valid setup found after all attempts
+      setStatus("Could not find a balanced setup with the given constraints. Try relaxing the settings.", { isError: true });
+      el.balancedDraft.disabled = false;
+      el.balancedDraft.textContent = "Generate Balanced Setup";
+      return;
+    }
+
+    // Apply the best pool
+    selectedLeaders.clear();
+    selectedLore.clear();
+    for (const n of bestLeaderNames) selectedLeaders.add(n);
+    for (const n of bestLoreNames) selectedLore.add(n);
+
+    renderPoolCards();
+    updatePoolCounts();
+    validateStartButton();
+
+    // Start draft and directly assign the optimal result
+    draft.generatedByBalanced = true;
+    startDraft();
+
+    // Apply the optimal assignments as picks (no draft order needed)
+    for (let p = 0; p < numPlayers; p++) {
+      const leader = bestResult.leaders[p];
+      draft.players[p].leader = leader;
+      draft.availableLeaders = draft.availableLeaders.filter((c) => c.name !== leader.name);
+      draft.history.push({ pickIndex: draft.pickIndex, card: { ...leader, pickType: "leader" }, type: "leader", playerIdx: p });
+      draft.pickIndex++;
+
+      for (const lore of bestResult.lore[p]) {
+        draft.players[p].lore.push(lore);
+        draft.availableLore = draft.availableLore.filter((c) => c.name !== lore.name);
+        draft.history.push({ pickIndex: draft.pickIndex, card: { ...lore, pickType: "lore" }, type: "lore", playerIdx: p });
+        draft.pickIndex++;
+      }
+    }
+
+    draft.active = false;
+    el.undoBtn.disabled = true;
+    renderDraft();
+
+    // Reset UI
     el.balancedDraft.disabled = false;
     el.balancedDraft.textContent = "Generate Balanced Setup";
-    return;
-  }
-
-  // Apply the best pool
-  selectedLeaders.clear();
-  selectedLore.clear();
-  for (const n of bestLeaderNames) selectedLeaders.add(n);
-  for (const n of bestLoreNames) selectedLore.add(n);
-
-  renderPoolCards();
-  updatePoolCounts();
-  validateStartButton();
-
-  // Start draft and directly assign the optimal result
-  draft.generatedByBalanced = true;
-  startDraft();
-
-  // Apply the optimal assignments as picks (no draft order needed)
-  for (let p = 0; p < numPlayers; p++) {
-    const leader = bestResult.leaders[p];
-    draft.players[p].leader = leader;
-    draft.availableLeaders = draft.availableLeaders.filter((c) => c.name !== leader.name);
-    draft.history.push({ pickIndex: draft.pickIndex, card: { ...leader, pickType: "leader" }, type: "leader", playerIdx: p });
-    draft.pickIndex++;
-
-    for (const lore of bestResult.lore[p]) {
-      draft.players[p].lore.push(lore);
-      draft.availableLore = draft.availableLore.filter((c) => c.name !== lore.name);
-      draft.history.push({ pickIndex: draft.pickIndex, card: { ...lore, pickType: "lore" }, type: "lore", playerIdx: p });
-      draft.pickIndex++;
+    if (!timedOut) {
+      setStatus("Balanced setup generated successfully!", { isError: false });
     }
+
+    // Scroll to the draft panel
+    el.draftPanel.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
-  draft.active = false;
-  el.undoBtn.disabled = true;
-  renderDraft();
-
-  // Reset UI
-  el.balancedDraft.disabled = false;
-  el.balancedDraft.textContent = "Generate Balanced Setup";
-  if (!timedOut) {
-    setStatus("Balanced setup generated successfully!", { isError: false });
-  }
-
-  // Scroll to the draft panel
-  el.draftPanel.scrollIntoView({ behavior: "smooth", block: "start" });
+  performAttempt();
 }
 
 // ========== Draft Logic ==========
@@ -1465,6 +1476,13 @@ function renderDraft() {
 function renderPhaseLabel() {
   if (!draft.active) {
     el.draftPhaseLabel.textContent = "Draft Complete!";
+    // Scroll to keep the completion message and buttons visible with some margin
+    setTimeout(() => {
+      const rect = el.draftPanel.getBoundingClientRect();
+      const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
+      const targetY = scrollTop + rect.top - 80; // 80px margin from top
+      window.scrollTo({ top: targetY, behavior: 'smooth' });
+    }, 100);
     return;
   }
   const drafter = getCurrentDrafter();
