@@ -26,7 +26,8 @@ const el = {
   customTierInput: document.getElementById("customTierInput"),
   customTierUrl: document.getElementById("customTierUrl"),
   customTierText: document.getElementById("customTierText"),
-  customTierLoad: document.getElementById("customTierLoad"),
+  customTierLoad3P: document.getElementById("customTierLoad3P"),
+  customTierLoad4P: document.getElementById("customTierLoad4P"),
   customTierStatus: document.getElementById("customTierStatus"),
   tierScoringGroup: document.getElementById("tierScoringGroup"),
   leaderWeight: document.getElementById("leaderWeight"),
@@ -67,6 +68,9 @@ let selectedLore = new Set();
 // Store all tier sources
 let personalLeaders = [];
 let personalLore = [];
+let personal3PLeaders = [];
+let personal4PLeaders = [];
+let personalBasecourt = [];
 let dataLeaders = [];
 let dataLore = [];
 let customLeaders = [];
@@ -81,7 +85,7 @@ let draft = {
   mySeat: 1,
   lorePerPlayer: 1, // Can be a number or "custom"
   customLoreCounts: [1, 1, 1], // Array of lore counts per player when using custom
-  tierSource: "personal",
+  tierSource: "personal3p",
   tierScoring: "varied",
   leaderTierConstraint: "any",
   loreTierConstraint: "any",
@@ -330,14 +334,21 @@ function parseCommunityTierData(playerCount, cards) {
 }
 
 function parseTierData(rows, cards) {
-  const leaders = [];
+  // Sheet format: Name | Tier  OR  "Name,Tier" in single column
+  // Empty rows separate 3P leaders, 4P leaders, lore, and base court
+  // First row is header (Name, Tier) or (Name,Tier)
+  const leaders3P = [];
+  const leaders4P = [];
   const lore = [];
-  const cardMap = new Map();
-  for (const c of cards) cardMap.set(normalizeText(c.name), c);
-
-  let inLore = false;
+  const basecourt = [];
+  let section = 0; // 0 = 3P leaders, 1 = 4P leaders, 2 = lore, 3 = base court
   let headerSkipped = false;
-  let emptyRowCount = 0;
+
+  // Build a lookup map: normalized name → card
+  const cardMap = new Map();
+  for (const card of cards) {
+    cardMap.set(normalizeText(card.name), card);
+  }
 
   for (const row of rows) {
     let name, tier;
@@ -358,31 +369,49 @@ function parseTierData(rows, cards) {
     }
     tier = tier.toUpperCase();
 
-    if (!headerSkipped && normalizeText(name) === "name") {
-      headerSkipped = true;
-      continue;
+    // Skip header row
+    if (!headerSkipped) {
+      if (normalizeText(name) === "name") {
+        headerSkipped = true;
+        continue;
+      }
     }
+
+    // Empty row = separator between sections
     if (!name && !tier) {
-      emptyRowCount++;
-      if (headerSkipped && leaders.length > 0 && emptyRowCount === 1) {
-        inLore = true;
-      } else if (emptyRowCount >= 2) {
-        // Stop after second empty row (base court separator)
-        break;
+      if (headerSkipped) {
+        section++;
+        if (section > 3) break; // Stop after base court section
       }
       continue;
     }
+
     if (!name || !tier) continue;
 
-    const card = cardMap.get(normalizeText(name)) ?? null;
-    const entry = { name, tier, value: 0, card };
-    if (inLore) lore.push(entry);
-    else leaders.push(entry);
+    const card = cardMap.get(normalizeText(name));
+    const entry = {
+      name,
+      tier,
+      value: 0,
+      card: card ?? null,
+    };
+
+    if (section === 0) {
+      leaders3P.push(entry);
+    } else if (section === 1) {
+      leaders4P.push(entry);
+    } else if (section === 2) {
+      lore.push(entry);
+    } else if (section === 3) {
+      basecourt.push(entry);
+    }
   }
 
-  assignValues(leaders);
+  assignValues(leaders3P);
+  assignValues(leaders4P);
   assignValues(lore);
-  return { leaders, lore };
+  assignValues(basecourt);
+  return { leaders3P, leaders4P, lore, basecourt };
 }
 
 // ========== Draft Order ==========
@@ -499,7 +528,8 @@ function initSetupUI() {
   }
 
   // Custom tier loading
-  el.customTierLoad.addEventListener("click", loadCustomTierData);
+  el.customTierLoad3P.addEventListener("click", () => loadCustomTierData("3p"));
+  el.customTierLoad4P.addEventListener("click", () => loadCustomTierData("4p"));
 
   // Tier scoring toggle
   for (const btn of el.tierScoringGroup.querySelectorAll(".btn-option")) {
@@ -1594,7 +1624,7 @@ function renderAvailableCards() {
   renderCardGroup(loreCards, "Lore");
 }
 
-async function loadCustomTierData() {
+async function loadCustomTierData(mode) {
   try {
     el.customTierStatus.textContent = "Loading…";
     el.customTierStatus.style.color = "var(--text-muted)";
@@ -1618,15 +1648,26 @@ async function loadCustomTierData() {
     const cards = await loadCards();
     const result = parseTierData(rows, cards);
 
-    if (result.leaders.length === 0 && result.lore.length === 0) {
+    let leadersToLoad = [];
+    if (mode === "3p") {
+      leadersToLoad = result.leaders3P;
+    } else if (mode === "4p") {
+      leadersToLoad = result.leaders4P;
+    } else {
+      // Combined mode (fallback)
+      leadersToLoad = [...result.leaders3P, ...result.leaders4P];
+    }
+
+    if (leadersToLoad.length === 0 && result.lore.length === 0) {
       el.customTierStatus.textContent = "No valid tier data found.";
       el.customTierStatus.style.color = "var(--red, #f87171)";
       return;
     }
 
-    customLeaders = result.leaders;
+    customLeaders = leadersToLoad;
     customLore = result.lore;
-    el.customTierStatus.textContent = `Loaded ${customLeaders.length} leaders, ${customLore.length} lore ✓`;
+    const modeText = mode === "3p" ? "3P" : mode === "4p" ? "4P" : "";
+    el.customTierStatus.textContent = `Loaded ${customLeaders.length} ${modeText} leaders, ${customLore.length} lore ✓`;
     el.customTierStatus.style.color = "var(--accent)";
     applyTierSource();
   } catch (err) {
@@ -1646,6 +1687,12 @@ function applyTierSource() {
   } else if (draft.tierSource === "community4p") {
     allLeaders = community4pLeaders;
     allLore = community4pLore;
+  } else if (draft.tierSource === "personal3p") {
+    allLeaders = personal3PLeaders;
+    allLore = personalLore;
+  } else if (draft.tierSource === "personal4p") {
+    allLeaders = personal4PLeaders;
+    allLore = personalLore;
   } else if (draft.tierSource === "custom") {
     allLeaders = customLeaders;
     allLore = customLore;
@@ -1748,8 +1795,11 @@ async function init() {
     ]);
 
     const personal = parseTierData(tierRows, cards);
-    personalLeaders = personal.leaders;
+    personalLeaders = [...personal.leaders3P, ...personal.leaders4P]; // For backward compatibility
     personalLore = personal.lore;
+    personal3PLeaders = personal.leaders3P;
+    personal4PLeaders = personal.leaders4P;
+    personalBasecourt = personal.basecourt;
 
     const ranked = parseRankedData(rankedRows, cards);
     dataLeaders = ranked.leaders;

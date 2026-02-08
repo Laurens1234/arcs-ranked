@@ -171,7 +171,8 @@
             <div class="setup-group">
               <label class="setup-label">Tier Source</label>
               <div class="btn-group" id="tierSourceGroup">
-                <button class="btn-option active" data-value="personal">Laurens's</button>
+                <button class="btn-option active" data-value="personal3p">Laurens's 3P</button>
+                <button class="btn-option" data-value="personal4p">Laurens's 4P</button>
                 <button class="btn-option" data-value="data">League</button>
                 <button class="btn-option" data-value="community3p">Community 3P</button>
                 <button class="btn-option" data-value="community4p">Community 4P</button>
@@ -179,11 +180,12 @@
               </div>
               <div id="customTierInput" class="custom-tier-input hidden">
                 <input id="customTierUrl" type="text" class="setup-input" placeholder="CSV URL (Google Sheets export link)" style="width:100%;margin-bottom:6px;box-sizing:border-box" />
-                <textarea id="customTierText" rows="4" placeholder="Or paste CSV text (Name,Tier — empty line separates leaders from lore)" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg-solid);color:var(--text);font-family:inherit;font-size:0.85rem;resize:vertical;box-sizing:border-box;margin-bottom:6px"></textarea>
-                <div style="display:flex;align-items:center;gap:8px">
-                  <button id="customTierLoad" class="btn-sm" style="white-space:nowrap">Load Tier List</button>
-                  <span id="customTierStatus" style="font-size:0.8rem;color:var(--text-muted)"></span>
+                <textarea id="customTierText" rows="4" placeholder="Or paste CSV text (Name,Tier — empty lines separate 3P leaders, 4P leaders, lore, and base court)" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg-solid);color:var(--text);font-family:inherit;font-size:0.85rem;resize:vertical;box-sizing:border-box;margin-bottom:6px"></textarea>
+                <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:6px">
+                  <button id="customTierLoad3P" class="btn-sm" style="white-space:nowrap">Load 3P Tier List</button>
+                  <button id="customTierLoad4P" class="btn-sm" style="white-space:nowrap">Load 4P Tier List</button>
                 </div>
+                <span id="customTierStatus" style="font-size:0.8rem;color:var(--text-muted)"></span>
               </div>
             </div>
             <!-- Tier Scoring -->
