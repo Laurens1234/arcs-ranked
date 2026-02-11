@@ -82,7 +82,7 @@ export const Community_DATA = {
 /**
  * Build stats objects from Community data.
  * Only includes actual data: ranking position and win rate.
- * No fabricated picks or wins — we don't have that data.
+ * No fabricated picks or wins - we don't have that data.
  *
  * @param {"3p"|"4p"} playerCount
  * @returns {{ stats: Array<{name,type,rankPosition,winRate,isCommunity:true}>, games: number }}

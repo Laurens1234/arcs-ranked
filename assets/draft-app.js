@@ -1209,7 +1209,7 @@ async function generateBalancedDraft() {
 
   // For a given pool, find the assignment with acceptable spread
   function findBestAssignment(poolLeaders, poolLore, playerLoreLimits, acceptableSpread) {
-    // Pick numPlayers leaders from pool — try all combos, then permutations
+    // Pick numPlayers leaders from pool - try all combos, then permutations
     const leaderCombos = combinations(poolLeaders, numPlayers);
     let bestSpread = Infinity;
     let bestAssignment = null;
@@ -1502,7 +1502,7 @@ function getBestPick(playerIdx) {
   if (cards.length === 0) return null;
 
   // "Value Above Replacement" approach:
-  // For each pickable card, calculate its opportunity cost —
+  // For each pickable card, calculate its opportunity cost -
   // the difference between this card's score and the score of
   // the worst card you could realistically end up with in the
   // same category if you skip it now.
@@ -1536,7 +1536,7 @@ function getBestPick(playerIdx) {
     let opportunityCost;
 
     if (card.pickType === "leader") {
-      // If I skip this leader, it stays in the pool — opponents may take it.
+      // If I skip this leader, it stays in the pool - opponents may take it.
       // At most `competitorsForLeader` opponents want a leader, but only
       // `picksBeforeMyNextTurn` picks happen before I go again, and not all
       // of those will be leaders.

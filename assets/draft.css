@@ -22,6 +22,49 @@
   animation: fadeInUp 0.4s ease-out;
 }
 
+/* Alternative explainer style (compact card with accent) */
+.draft-explainer.alt {
+  display: block;
+  background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));
+  border: none;
+  border-left: 6px solid var(--accent);
+  box-shadow: var(--shadow-card);
+  padding: 0;
+}
+
+.draft-explainer.alt > .draft-explainer-toggle {
+  padding: 12px 16px;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--text);
+}
+
+.draft-explainer.alt > .draft-explainer-toggle::before {
+  content: "▼";
+  font-size: 0.85rem;
+  transition: transform 0.18s;
+  color: var(--accent);
+}
+
+.draft-explainer.alt[open] > .draft-explainer-toggle::before {
+  transform: rotate(-180deg);
+}
+
+.draft-explainer.alt .draft-explainer-body {
+  padding: 12px 16px 16px;
+  background: transparent;
+  color: var(--text-muted);
+  border-top: 1px dashed rgba(255,255,255,0.02);
+}
+
+.draft-explainer.alt .draft-explainer-body h4 {
+  font-size: 0.95rem;
+  color: var(--text);
+  margin-top: 10px;
+}
+
 .draft-explainer-toggle {
   padding: 14px 20px;
   font-size: 1rem;

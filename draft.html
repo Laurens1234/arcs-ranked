@@ -62,42 +62,70 @@
         <div id="status" class="status">Loading cards…</div>
 
         <!-- ===== HOW IT WORKS ===== -->
-        <details class="draft-explainer">
+        <details class="draft-explainer alt">
           <summary class="draft-explainer-toggle">How It Works</summary>
           <div class="draft-explainer-body">
             <p>
-              This tool simulates an Arcs draft to help you decide which <strong>leader</strong> and <strong>lore</strong> cards to pick.
-              Set up the draft to match your real game: number of players, your seat position, and which cards are in the pool, then let the tool recommend optimal picks.
+              This tool simulates an Arcs draft and provides recommendations to help you choose the best <strong>leader</strong> and <strong>lore</strong> cards. Configure the settings to match your real game (players, seat, pool, etc.), then use the UI to run or simulate drafts.
             </p>
+
             <h4>Setup</h4>
             <ul>
-              <li><strong>Players</strong> - how many people are drafting (2–4).</li>
-              <li><strong>Your Seat</strong> - which position you're sitting in. Draft order goes from the last player down (e.g. 3→2→1→3→2→1…).</li>
-              <li><strong>Lore per Player</strong> - how many lore cards each player drafts.</li>
-              <li><strong>Tier Source</strong> - <em>Laurens's</em> uses Laurens's personal tier rankings; <em>League</em> uses Community win-rate data from the Arcs League ranked page; <em>Community 3P/4P</em> uses Community draft data from 3-player or 4-player games; <em>Custom</em> lets you import your own tier list (export one from the <a href="./tierlist">Tier List</a> page).</li>
-              <li><strong>Tier Scoring</strong> - <em>Varied</em> gives a small point spread (±0.3) within each tier based on sub-ranking; <em>Same</em> gives every card in a tier the exact same score.</li>
-              <li><strong>Leader Weight</strong> - how much more a leader is worth relative to a lore card (e.g. 3× means a leader's score is tripled).</li>
-              <li><strong>Draft Pool</strong> - select the exact leaders and lore cards that are available in your game. Use <em>Random</em> to fill or <em>Clear</em> to reset.</li>
+              <li><strong>Players</strong> - choose 2–4 players.</li>
+              <li><strong>Your Seat</strong> - select your seat; draft order supports descending and snake formats.</li>
+              <li><strong>Lore per Player</strong> - set a fixed number or use <em>Custom</em> to specify per-player counts.</li>
+              <li><strong>Leaders / Lores in Pool</strong> - adjust pool sizes and use <em>Random</em> or <em>Clear</em> to fill/reset the pool.</li>
             </ul>
+
+            <h4>Tier Sources & Custom Tiers</h4>
+            <ul>
+              <li><strong>Built-in</strong> - Laurens's 3P/4P and League data (Community win-rates).</li>
+              <li><strong>Community</strong> - separate 3P and 4P community draft data sources are available.</li>
+              <li><strong>Custom</strong> - paste CSV text or provide a Google Sheets CSV export URL to load your own tier lists (supports separate 3P/4P/lore sections).</li>
+            </ul>
+
+            <h4>Scoring & Weights</h4>
+            <ul>
+              <li><strong>Tier Scoring</strong> - <em>Varied</em> spreads a small sub-score within a tier; <em>Same</em> gives every card the tier base score.</li>
+              <li><strong>Leader Weight</strong> - adjust how much leaders count relative to lore (slider 1×–5×).</li>
+              <li>Base tier scores (SSS→F) are used; final pick values include sub-ranking, leader weight, synergy bonuses and handicaps.</li>
+            </ul>
+
+            <h4>Pool Tools & Balanced Setup</h4>
+            <ul>
+              <li><strong>Balanced Generator</strong> - auto-generate a balanced draft pool with options to constrain leader/lore tiers and set an acceptable point spread.</li>
+              <li><strong>Handicaps</strong> - apply point handicaps per player when generating balanced pools.</li>
+            </ul>
+
             <h4>Drafting</h4>
             <ul>
-              <li>Once you start, the tool shows whose turn it is and which cards are available.</li>
-              <li>The card marked <strong>Best</strong> is the recommended pick based on <em>opportunity cost</em> - it picks the card you'd lose the most value on if you passed.</li>
-              <li>Click a card to make that pick (for yourself or on behalf of other players to match what they chose in real life).</li>
-              <li><strong>Auto Draft</strong> completes the entire remaining draft using the drafting algorithms recommendations.</li>
-              <li><strong>Undo</strong> takes back the last pick. <strong>Reset</strong> undoes all picks back to the start.</li>
+              <li><strong>Start Draft</strong> launches the interactive draft board showing player boards and the current turn.</li>
+              <li><strong>Best</strong> picks are marked by opportunity cost - the recommendation that would lose you the most value if you pass.</li>
+              <li><strong>Auto Draft</strong> completes remaining picks automatically using the same recommendation logic.</li>
+              <li><strong>Undo</strong> reverts the last pick; <strong>Reset</strong> clears all picks back to the start.</li>
+              <li><strong>Save Image</strong> lets you export the draft board as a PNG.</li>
             </ul>
-            <h4>Scoring</h4>
+
+            <h4>Simulation & Analysis</h4>
+            <ul>
+              <li><strong>Simulate Drafts & Export CSV</strong> - run many simulated drafts and export results as CSV (button shown when running locally).</li>
+              <li>Simulations account for drafting order, weights, synergies and handicaps for realistic aggregate results.</li>
+            </ul>
+
+            <h4>Advanced Notes</h4>
+            <ul>
+              <li>Synergy bonuses between specific leaders and lore are included when computing final player scores.</li>
+              <li>Balanced generation can be toggled and tuned via the ⚙ settings next to the generator button.</li>
+              <li>Custom tier URLs must be publicly accessible (Google Sheets export links work best).</li>
+            </ul>
+
             <p>
-              Each tier has a base score: SSS: 7, SS: 6, S: 5, A: 4, B: 3, C: 2, D: 1, F: 0.
-              With <em>Varied</em> scoring, cards get up to ±0.3 within their tier based on their sub-ranking - so the best card in A-tier scores slightly higher than the worst card in A-tier, even though they share the same tier. Use <em>Same</em> if you consider all cards within a tier to be equal.
-              Leader scores are multiplied by the leader weight.
-              The AI picks the card with the highest <strong>opportunity cost</strong>: the biggest drop-off between that card and the replacement you'd likely end up with if you skip it.
+              The tool is intended as a decision aid. Always combine recommendations with your strategic judgment (starting court, counters, combos, etc.).
             </p>
           </div>
         </details>
 
-        <details class="draft-explainer">
+        <details class="draft-explainer alt">
           <summary class="draft-explainer-toggle">Draft Strategy</summary>
           <div class="draft-explainer-body">
             <p>The most important thing to realize about drafting in arcs is that leaders are far more impactful than lores.</strong> In my experience A single tier difference in leaders is roughly equivalent to a 3-tier difference in lore. Only prioritize a lore card over a leader if the available leaders are all close in strength.</p>
@@ -188,7 +216,7 @@
               </div>
               <div id="customTierInput" class="custom-tier-input hidden">
                 <input id="customTierUrl" type="text" class="setup-input" placeholder="CSV URL (Google Sheets export link)" style="width:100%;margin-bottom:6px;box-sizing:border-box" />
-                <textarea id="customTierText" rows="4" placeholder="Or paste CSV text (Name,Tier — empty lines separate 3P leaders, 4P leaders, lore, and base court)" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg-solid);color:var(--text);font-family:inherit;font-size:0.85rem;resize:vertical;box-sizing:border-box;margin-bottom:6px"></textarea>
+                <textarea id="customTierText" rows="4" placeholder="Or paste CSV text (Name,Tier - empty lines separate 3P leaders, 4P leaders, lore, and base court)" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg-solid);color:var(--text);font-family:inherit;font-size:0.85rem;resize:vertical;box-sizing:border-box;margin-bottom:6px"></textarea>
                 <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:6px">
                   <button id="customTierLoad3P" class="btn-sm" style="white-space:nowrap">Load 3P Tier List</button>
                   <button id="customTierLoad4P" class="btn-sm" style="white-space:nowrap">Load 4P Tier List</button>

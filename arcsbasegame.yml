@@ -330,7 +330,7 @@
     - Leader
 - id: ARCS-LEAD09
   text: >-
-    *Learned*. After **setup**, gain 2 extra lore cards—draw 5 lore, keep 2, and scrap the other 3 *(returning them to the box).*
+    *Learned*. After **setup**, gain 2 extra lore cards - draw 5 lore, keep 2, and scrap the other 3 *(returning them to the box).*
      
     *Academic*. When you're **scoring** Tycoon, gain no Power for second place, and gain Power for second place if you get first place. *(Don't get bonus city Power.)*
   image: LEAD09
@@ -719,7 +719,7 @@
     keys: 1
 - id: ARCS-BC23
   text: >-
-    **Trade (Tax):** Choose a Rival city you control. Swap 1 resource with that Rival—take a resource of that city type from them, and give them a resource they don't have.
+    **Trade (Tax):** Choose a Rival city you control. Swap 1 resource with that Rival - take a resource of that city type from them, and give them a resource they don't have.
      
     **Prelude:** You may discard this to gain 1 Material, 1 Fuel, and 1 Weapon.
   image: BC23

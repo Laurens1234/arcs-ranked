@@ -251,7 +251,7 @@ function calculateInsights(leaders, lore, gamesOverride) {
   const leaderAvgWR = leaders.reduce((sum, c) => sum + (c.stats?.winRate ?? 0), 0) / leaders.length;
   const loreAvgWR = lore.reduce((sum, c) => sum + (c.stats?.winRate ?? 0), 0) / lore.length;
   
-  // Total games — use override if provided, else estimate from leader picks
+  // Total games - use override if provided, else estimate from leader picks
   const totalPicks = isCommunity ? 0 : leaders.reduce((sum, c) => sum + (c.stats?.timesPicked ?? 0), 0);
   const estimatedGames = gamesOverride ?? Math.round(totalPicks / 4);
   
@@ -353,7 +353,7 @@ function renderScatterChart(cards, container, dotClass = "leader") {
   const chartW = width - padding.left - padding.right;
   const chartH = height - padding.top - padding.bottom;
   
-  // Scale functions — for Community, invert X so rank 1 is on the right
+  // Scale functions - for Community, invert X so rank 1 is on the right
   const xScale = isCommunity
     ? (rank) => padding.left + ((maxX - rank) / (maxX - minX)) * chartW
     : (picks) => padding.left + (picks / (maxX || 1)) * chartW;
