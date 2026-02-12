@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Arcs Dice Calculator</title>
+    <meta name="description" content="Calculate probabilities for Arcs dice rolls. Assault, Skirmish, and Raid dice mechanics explained." />
+    <!-- Open Graph -->
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Arcs Dice Calculator" />
+    <meta property="og:description" content="Calculate probabilities for Arcs dice rolls. Assault, Skirmish, and Raid dice mechanics explained." />
+    <meta property="og:image" content="./favicon.svg" />
+    <!-- Twitter Card -->
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content="Arcs Dice Calculator" />
+    <meta name="twitter:description" content="Calculate probabilities for Arcs dice rolls. Assault, Skirmish, and Raid dice mechanics explained." />
+    <meta name="twitter:image" content="./favicon.svg" />
+    <meta name="theme-color" content="#8b5cf6" />
+    <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="./assets/style.css" />
+    <link rel="stylesheet" href="./assets/dice.css" />
+    <style>
+      html {
+        scrollbar-width: none;
+      }
+      html::-webkit-scrollbar {
+        display: none;
+      }
+    </style>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+  </head>
+  <body>
+    <header class="header">
+      <div class="container header-inner">
+        <div>
+          <h1 class="logo"><a href="./index" style="text-decoration:none;color:inherit">Dice Calculator</a></h1>
+          <p class="tagline">Calculate probabilities for Arcs dice rolls</p>
+        </div>
+        <button id="themeToggle" class="theme-toggle" aria-label="Toggle theme">
+          <svg class="icon-sun" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
+          </svg>
+          <svg class="icon-moon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/>
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <nav class="nav">
+      <div class="container">
+        <div class="controls">
+          <a href="./index" class="btn-compare">← Home</a>
+        </div>
+      </div>
+    </nav>
+
+    <main class="main">
+      <div class="container">
+        <div id="status" class="status">Loading dice calculator…</div>
+
+        <!-- ===== PROBABILITY CALCULATOR ===== -->
+        <div class="dice-calculator">
+          <h2 class="dice-section-title">Arcs Dice</h2>
+          <div class="dice-inputs">
+            <div class="dice-row">
+              <button class="dice-label-btn" id="assaultLabel">Assault</button>
+              <div class="dice-visual" id="assaultVisual"></div>
+              <button class="dice-clear-btn" id="assaultClear" title="Clear all Assault dice">×</button>
+            </div>
+            <div class="dice-row">
+              <button class="dice-label-btn" id="skirmishLabel">Skirmish</button>
+              <div class="dice-visual" id="skirmishVisual"></div>
+              <button class="dice-clear-btn" id="skirmishClear" title="Clear all Skirmish dice">×</button>
+            </div>
+            <div class="dice-row">
+              <button class="dice-label-btn" id="raidLabel">Raid</button>
+              <div class="dice-visual" id="raidVisual"></div>
+              <button class="dice-clear-btn" id="raidClear" title="Clear all Raid dice">×</button>
+            </div>
+          </div>
+          <div id="result" class="calc-result"></div>
+          <div class="roll-section">
+            <button id="rollDiceBtn" class="btn-roll">🎲 Roll Dice</button>
+          </div>
+          <div id="bellCurvesSection"></div>
+        </div>
+      </div>
+    </main>
+
+    <footer class="footer">
+      <div class="container">
+        <p><a href="./tierlist">My Tier List</a> · <a href="./data">Data Arsenal</a> · <a href="./draft">Draft Helper</a> · <a href="./index">Home</a></p>
+        <button id="resetAllBtn" class="btn-sm" style="position: absolute; bottom: 20px; right: 24px; opacity: 0.8; font-size: 0.8rem;" title="Reset All (reloads page)">Reset All</button>
+      </div>
+    </footer>
+
+    <script type="module" src="./assets/dice-app.js"></script>
+  </body>
+</html>
