@@ -2,7 +2,7 @@
 <html lang="en" data-theme="dark">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=1248, initial-scale=0.3" />
     <title>Arcs Dice Calculator</title>
     <meta name="description" content="Calculate probabilities for Arcs dice rolls." />
     <!-- Open Graph -->
@@ -25,6 +25,36 @@
       }
       html::-webkit-scrollbar {
         display: none;
+      }
+      body {
+        touch-action: manipulation;
+      }
+      .dice-calculator {
+        width: 1200px;
+        margin: 0 auto;
+      }
+      .container {
+        max-width: none !important;
+        min-width: 1248px !important;
+        padding: 0 24px !important;
+      }
+      .nav .container {
+        flex-direction: row !important;
+      }
+      .header-inner {
+        display: flex !important;
+        justify-content: space-between !important;
+        align-items: center !important;
+      }
+      .logo {
+        font-size: 2.5rem !important;
+      }
+      .tagline {
+        font-size: 1rem !important;
+      }
+      #bellCurvesSection {
+        max-width: none !important;
+        width: 100% !important;
       }
     </style>
     <link rel="preconnect" href="https://fonts.googleapis.com">

@@ -129,7 +129,7 @@ function countRolledIcons() {
 function round(num, toPercent = false) {
   const formatter = new Intl.NumberFormat('en-US', {
     style: 'decimal',
-    maximumFractionDigits: 2,
+    maximumFractionDigits: 1,
     minimumFractionDigits: 0,
   });
   if (toPercent) {
@@ -351,10 +351,11 @@ function updateResults() {
         const i = idx + offset;
         const height = maxProb > 0 ? (p / maxProb) * 120 : 0; // 120px max height
         const percent = (p * 100).toFixed(1);
+        const tooltipPercent = (p * 100).toFixed(3);
         const label = existingMode === 'atleast' ? `≥${i}` : existingMode === 'atmost' ? `≤${i}` : i;
         return `
           <div class="bell-curve-bar-container" style="width: ${barWidth};">
-            <div class="bell-curve-bar" style="height: ${height}px;" title="${i}: ${percent}%"></div>
+            <div class="bell-curve-bar" style="height: ${height}px;" title="${i}: ${tooltipPercent}%"></div>
             <div class="bell-curve-label">${label}</div>
             <div class="bell-curve-percent">${percent}%</div>
           </div>
