@@ -425,6 +425,7 @@ function updateResults() {
             <label>Max:</label>
             <select id="max-${icon.key}" class="custom-prob-input">
               ${Array.from({length: 21}, (_, i) => `<option value="${i}" ${currentValues[icon.key]?.max == i ? 'selected' : ''}>${i}</option>`).join('')}
+              <option value="999" ${currentValues[icon.key]?.max == 999 ? 'selected' : 'selected'}>&infin;</option>
             </select>
             <span class="custom-prob-result" id="result-${icon.key}">0%</span>
           </div>
