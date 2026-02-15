@@ -27,7 +27,7 @@ const RaidDie = {
   sides: [
     { count: { hit: 0, miss: 0, key: 2, selfhit: 0, intercept: 1, buildinghit: 0 } },
     { count: { hit: 0, miss: 0, key: 1, selfhit: 1, intercept: 0, buildinghit: 0 } },
-    { count: { hit: 0, miss: 0, key: 0, selfhit: 0, intercept: 1, buildinghit: 1 } },
+    { count: { hit: 0, miss: 0, key: 0, selfhit: 0, intercept: 1, buildinghit: 0 } },
     { count: { hit: 0, miss: 0, key: 0, selfhit: 1, intercept: 0, buildinghit: 1 } },
     { count: { hit: 0, miss: 0, key: 1, selfhit: 0, intercept: 0, buildinghit: 1 } },
     { count: { hit: 0, miss: 0, key: 0, selfhit: 1, intercept: 0, buildinghit: 1 } },
@@ -42,8 +42,8 @@ const selectedRaidFaces = new Set([2, 3, 5]); // Faces 3, 4, 6 enabled by defaul
 
 // Selected faces for empath rerolls (separate for each die type)
 const selectedAssaultEmpathFaces = new Set([0, 1, 5]); // Faces 1, 2, 6 enabled by default for assault
-const selectedSkirmishEmpathFaces = new Set([0]); // Faces 1, 2, 3 enabled by default for skirmish
-const selectedRaidEmpathFaces = new Set([0, 5]); // Faces 1, 2, 6 enabled by default for raid
+const selectedSkirmishEmpathFaces = new Set([0, 1, 2]); // Faces 1, 2, 3 enabled by default for skirmish
+const selectedRaidEmpathFaces = new Set([2,3,5]); //Faces 1, 2, 6 enabled by default for raid
 
 // Priority order for assault faces (0-5, higher index = lower priority)
 let assaultFacePriority = [0, 1, 5, 2, 3, 4]; // Faces 1,2,6,3,4,5

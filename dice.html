@@ -56,6 +56,15 @@
         max-width: none !important;
         width: 100% !important;
       }
+
+      @media (max-width: 768px) {
+        #cardModal .modal-content {
+          max-width: 95vw !important;
+        }
+        #cardModalImage {
+          max-width: 90vw !important;
+        }
+      }
     </style>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -226,17 +235,19 @@
     <div id="helpModal" class="modal">
       <div class="modal-content" style="max-width: 900px;">
         <h3>Dice Calculator Settings Help</h3>
-        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; margin-top: 20px; justify-items: center;">
+        <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 20px; justify-items: center;">
           
-          <img src="https://raw.githubusercontent.com/buriedgiantstudios/cards/master/content/card-images/arcs/en-US/L14.png" alt="Seeker Torpedoes" style="width: 150px; height: auto; border-radius: 8px; cursor: pointer;" title="Seeker Torpedoes" onclick="showEnlargedCard('https://raw.githubusercontent.com/buriedgiantstudios/cards/master/content/card-images/arcs/en-US/L14.png', 'Seeker Torpedoes')">
+          <img src="https://raw.githubusercontent.com/buriedgiantstudios/cards/master/content/card-images/arcs/en-US/BC13.png" alt="Skirmishers" style="width: 180px; height: auto; border-radius: 8px; cursor: pointer;" title="Skirmishers" onclick="showEnlargedCard('https://raw.githubusercontent.com/buriedgiantstudios/cards/master/content/card-images/arcs/en-US/BC13.png', 'Skirmishers')">
           
-          <img src="https://raw.githubusercontent.com/buriedgiantstudios/cards/master/content/card-images/arcs/en-US/LEAD11.png" alt="Corsair" style="width: 150px; height: auto; border-radius: 8px; cursor: pointer;" title="Corsair" onclick="showEnlargedCard('https://raw.githubusercontent.com/buriedgiantstudios/cards/master/content/card-images/arcs/en-US/LEAD11.png', 'Corsair')">
+          <img src="https://raw.githubusercontent.com/buriedgiantstudios/cards/master/content/card-images/arcs/en-US/L14.png" alt="Seeker Torpedoes" style="width: 180px; height: auto; border-radius: 8px; cursor: pointer;" title="Seeker Torpedoes" onclick="showEnlargedCard('https://raw.githubusercontent.com/buriedgiantstudios/cards/master/content/card-images/arcs/en-US/L14.png', 'Seeker Torpedoes')">
           
-          <img src="https://raw.githubusercontent.com/buriedgiantstudios/cards/master/content/card-images/arcs/en-US/L19.png" alt="Empath's Vision" style="width: 150px; height: auto; border-radius: 8px; cursor: pointer;" title="Empath's Vision" onclick="showEnlargedCard('https://raw.githubusercontent.com/buriedgiantstudios/cards/master/content/card-images/arcs/en-US/L19.png', 'Empath\'s Vision')">
+          <img src="https://raw.githubusercontent.com/buriedgiantstudios/cards/master/content/card-images/arcs/en-US/LEAD11.png" alt="Corsair" style="width: 180px; height: auto; border-radius: 8px; cursor: pointer;" title="Corsair" onclick="showEnlargedCard('https://raw.githubusercontent.com/buriedgiantstudios/cards/master/content/card-images/arcs/en-US/LEAD11.png', 'Corsair')">
           
-          <img src="https://raw.githubusercontent.com/buriedgiantstudios/cards/master/content/card-images/arcs/en-US/L04.png" alt="Mirror Plating" style="width: 150px; height: auto; border-radius: 8px; cursor: pointer;" title="Mirror Plating" onclick="showEnlargedCard('https://raw.githubusercontent.com/buriedgiantstudios/cards/master/content/card-images/arcs/en-US/L04.png', 'Mirror Plating')">
+          <img src="https://raw.githubusercontent.com/buriedgiantstudios/cards/master/content/card-images/arcs/en-US/L19.png" alt="Empath's Vision" style="width: 180px; height: auto; border-radius: 8px; cursor: pointer;" title="Empath's Vision" onclick="showEnlargedCard('https://raw.githubusercontent.com/buriedgiantstudios/cards/master/content/card-images/arcs/en-US/L19.png', 'Empath\'s Vision')">
           
-          <img src="https://raw.githubusercontent.com/buriedgiantstudios/cards/master/content/card-images/arcs/en-US/L06.png" alt="Signal Breaker" style="width: 150px; height: auto; border-radius: 8px; cursor: pointer;" title="Signal Breaker" onclick="showEnlargedCard('https://raw.githubusercontent.com/buriedgiantstudios/cards/master/content/card-images/arcs/en-US/L06.png', 'Signal Breaker')">
+          <img src="https://raw.githubusercontent.com/buriedgiantstudios/cards/master/content/card-images/arcs/en-US/L04.png" alt="Mirror Plating" style="width: 180px; height: auto; border-radius: 8px; cursor: pointer;" title="Mirror Plating" onclick="showEnlargedCard('https://raw.githubusercontent.com/buriedgiantstudios/cards/master/content/card-images/arcs/en-US/L04.png', 'Mirror Plating')">
+          
+          <img src="https://raw.githubusercontent.com/buriedgiantstudios/cards/master/content/card-images/arcs/en-US/L06.png" alt="Signal Breaker" style="width: 180px; height: auto; border-radius: 8px; cursor: pointer;" title="Signal Breaker" onclick="showEnlargedCard('https://raw.githubusercontent.com/buriedgiantstudios/cards/master/content/card-images/arcs/en-US/L06.png', 'Signal Breaker')">
           
         </div>
         <div style="margin-top: 20px; text-align: center;">
