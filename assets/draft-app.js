@@ -1131,7 +1131,7 @@ async function generateBalancedDraft() {
   if (leaderMax < numPlayers || loreMax < totalLoreNeeded) return;
 
   // Show loading indicator
-  setStatus("Generating balanced setup...", { isError: false });
+  setStatus("Generating balanced draft...", { isError: false });
   el.balancedDraft.disabled = true;
   el.balancedDraft.textContent = "Generating... (0/1000)";
 
@@ -1374,15 +1374,15 @@ async function generateBalancedDraft() {
     } else if (timedOut) {
       setStatus("Generation timed out after 10 seconds. No valid setup found.", { isError: true });
       el.balancedDraft.disabled = false;
-      el.balancedDraft.textContent = "Generate Balanced Setup";
+      el.balancedDraft.textContent = "Generate Balanced Draft";
       return;
     }
 
     if (!bestResult) {
       // No valid setup found after all attempts
-      setStatus("Could not find a balanced setup with the given constraints. Try relaxing the settings.", { isError: true });
+      setStatus("Could not find a balanced draft with the given constraints. Try relaxing the settings.", { isError: true });
       el.balancedDraft.disabled = false;
-      el.balancedDraft.textContent = "Generate Balanced Setup";
+      el.balancedDraft.textContent = "Generate Balanced Draft";
       return;
     }
 
@@ -1422,9 +1422,9 @@ async function generateBalancedDraft() {
 
     // Reset UI
     el.balancedDraft.disabled = false;
-    el.balancedDraft.textContent = "Generate Balanced Setup";
+    el.balancedDraft.textContent = "Generate Balanced Draft";
     if (!timedOut) {
-      setStatus("Balanced setup generated successfully!", { isError: false });
+      setStatus("Balanced Draft generated successfully!", { isError: false });
     }
 
     // Scroll to the draft panel
