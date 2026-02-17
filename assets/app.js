@@ -1304,6 +1304,9 @@ async function main() {
 
     // Wire up data source toggle
     wireDataSourceToggle();
+
+    // Ensure initial data source UI/footer is populated (show league totals)
+    switchDataSource("league");
     
     // Configure initial metric options for league data source
     el.metric.querySelector('option[value="winRate"]').disabled = false;
