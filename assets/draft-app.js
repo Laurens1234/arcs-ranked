@@ -493,7 +493,34 @@ function initSetupUI() {
     });
   // Button groups
   setupBtnGroup(el.playerCountGroup, (val) => {
+    const prevNumPlayers = draft.numPlayers;
     draft.numPlayers = parseInt(val);
+    const newNumPlayers = draft.numPlayers;
+
+    function switchTierSource(newSource) {
+      const prevActive = el.tierSourceGroup.querySelector('.active');
+      if (prevActive) prevActive.classList.remove('active');
+      const btn = el.tierSourceGroup.querySelector(`[data-value="${newSource}"]`);
+      if (btn) btn.classList.add('active');
+      draft.tierSource = newSource;
+      el.customTierInput.classList.toggle("hidden", draft.tierSource !== "custom");
+      applyTierSource();
+    }
+
+    // Map 3P <-> 4P for personal and community tier sources
+    if (prevNumPlayers === 3 && newNumPlayers === 4) {
+      if (draft.tierSource === "personal3p") switchTierSource("personal4p");
+      else if (draft.tierSource === "Community3p") switchTierSource("Community4p");
+    } else if (prevNumPlayers === 4 && newNumPlayers === 3) {
+      if (draft.tierSource === "personal4p") switchTierSource("personal3p");
+      else if (draft.tierSource === "Community4p") switchTierSource("Community3p");
+    }
+
+    // If switching from 4P down to 2P, fallback to the 3P tier lists for personal/community
+    if (prevNumPlayers === 4 && newNumPlayers === 2) {
+      if (draft.tierSource === "personal4p") switchTierSource("personal3p");
+      else if (draft.tierSource === "Community4p") switchTierSource("Community3p");
+    }
     // Adjust custom lore counts array size
     if (Array.isArray(draft.customLoreCounts)) {
       if (draft.numPlayers > draft.customLoreCounts.length) {
@@ -615,195 +642,7 @@ function initSetupUI() {
   setupBtnGroup(el.loreTierConstraint, (val) => { draft.loreTierConstraint = val; });
   el.startDraft.addEventListener("click", startDraft);
 
-  // Simulate Drafts button (only show on dev server)
-  const simBtn = document.getElementById("simulateDrafts");
-  if (simBtn) {
-    // Hide button unless running on localhost or 127.0.0.1
-    const isDev = location.hostname === "localhost" || location.hostname === "127.0.0.1";
-    if (!isDev) {
-      simBtn.style.display = "none";
-      // Optionally, return early so no event is attached
-      return;
-    }
-    simBtn.addEventListener("click", async () => {
-      const numSimulations = 100000;
-      const results = [];
-      const orders = ["descending", "snake"];
-      for (const order of orders) {
-        let sim = 0;
-        while (sim < numSimulations) {
-          const numPlayers = draft.numPlayers;
-          const leaderMax = parseInt(el.leaderPoolSize.value);
-          const loreMax = parseInt(el.lorePoolSize.value);
-          const poolLeaders = [...allLeaders].sort(() => Math.random() - 0.5).slice(0, leaderMax);
-          const poolLore = [...allLore].sort(() => Math.random() - 0.5).slice(0, loreMax);
-          assignValues(poolLeaders);
-          assignValues(poolLore);
-          // Setup draft state for simulation
-          const simDraft = {
-            numPlayers,
-            lorePerPlayer: draft.lorePerPlayer,
-            customLoreCounts: draft.customLoreCounts ? [...draft.customLoreCounts] : null,
-            draftOrder: order,
-            pickIndex: 0,
-            order: [],
-            players: [],
-            availableLeaders: poolLeaders.map(x => ({...x})),
-            availableLore: poolLore.map(x => ({...x})),
-            history: [],
-          };
-          for (let i = 0; i < numPlayers; i++) simDraft.players.push({ leader: null, lore: [] });
-          simDraft.order = buildSimDraftOrder(numPlayers, order);
-          // Simulate draft using getBestPick logic
-          let picks = 0;
-          let completed = false;
-          while (simDraft.players.some((p, idx) => !p.leader || p.lore.length < getLoreCountForPlayer(idx, simDraft))) {
-            const drafterIdx = simDraft.order[simDraft.pickIndex % simDraft.order.length] - 1;
-            const player = simDraft.players[drafterIdx];
-            // Use getBestPick logic for this simulated player
-            function getSimPickableCards(playerIdx) {
-              const player = simDraft.players[playerIdx];
-              const cards = [];
-              if (!player.leader) {
-                for (const c of simDraft.availableLeaders) cards.push({ ...c, pickType: "leader" });
-              }
-              if (player.lore.length < getLoreCountForPlayer(playerIdx, simDraft)) {
-                for (const c of simDraft.availableLore) cards.push({ ...c, pickType: "lore" });
-              }
-              return cards;
-            }
-            function getSimBestPick(playerIdx) {
-              const cards = getSimPickableCards(playerIdx);
-              if (cards.length === 0) return null;
-              let competitorsForLeader = 0;
-              let competitorsForLore = 0;
-              for (let i = 0; i < simDraft.numPlayers; i++) {
-                if (i === playerIdx) continue;
-                if (!simDraft.players[i].leader) competitorsForLeader++;
-                if (simDraft.players[i].lore.length < getLoreCountForPlayer(i, simDraft)) competitorsForLore++;
-              }
-              const sortedLeaders = [...simDraft.availableLeaders].sort((a, b) => b.value - a.value);
-              const sortedLore = [...simDraft.availableLore].sort((a, b) => b.value - a.value);
-              let bestCard = null;
-              let bestOpportunityCost = -Infinity;
-              const picksBeforeMyNextTurn = simDraft.numPlayers - 1;
-              for (const card of cards) {
-                let opportunityCost;
-                if (card.pickType === "leader") {
-                  let cardScore = getWeightedScore(card, "leader");
-                  // Add synergy bonus if this leader synergizes with current lore
-                  for (const synergy of SYNERGIES) {
-                    if (card.name === synergy.leader) {
-                      const hasLore = simDraft.players[playerIdx].lore.some(l => l.name === synergy.lore);
-                      if (hasLore) {
-                        const bonus = typeof synergy.bonus === 'function' ? synergy.bonus(simDraft.numPlayers) : synergy.bonus;
-                        cardScore += bonus;
-                      }
-                    }
-                  }
-                  const leadersTakenBefore = Math.min(competitorsForLeader, picksBeforeMyNextTurn);
-                  const replacementIdx = leadersTakenBefore;
-                  if (replacementIdx < sortedLeaders.length) {
-                    let replacementScore = getWeightedScore(sortedLeaders[replacementIdx], "leader");
-                    // Add synergy bonus for replacement if applicable
-                    for (const synergy of SYNERGIES) {
-                      if (sortedLeaders[replacementIdx].name === synergy.leader) {
-                        const hasLore = simDraft.players[playerIdx].lore.some(l => l.name === synergy.lore);
-                        if (hasLore) {
-                          const bonus = typeof synergy.bonus === 'function' ? synergy.bonus(simDraft.numPlayers) : synergy.bonus;
-                          replacementScore += bonus;
-                        }
-                      }
-                    }
-                    opportunityCost = cardScore - replacementScore;
-                  } else {
-                    opportunityCost = cardScore;
-                  }
-                } else {
-                  let cardScore = getWeightedScore(card, "lore");
-                  // Add synergy bonus if this lore synergizes with current leader
-                  if (simDraft.players[playerIdx].leader) {
-                    for (const synergy of SYNERGIES) {
-                      if (simDraft.players[playerIdx].leader.name === synergy.leader && card.name === synergy.lore) {
-                        const bonus = typeof synergy.bonus === 'function' ? synergy.bonus(simDraft.numPlayers) : synergy.bonus;
-                        cardScore += bonus;
-                      }
-                    }
-                  }
-                  const loreTakenBefore = Math.min(competitorsForLore, picksBeforeMyNextTurn);
-                  const replacementIdx = loreTakenBefore;
-                  if (replacementIdx < sortedLore.length) {
-                    let replacementScore = getWeightedScore(sortedLore[replacementIdx], "lore");
-                    // Add synergy bonus for replacement if applicable
-                    if (simDraft.players[playerIdx].leader) {
-                      for (const synergy of SYNERGIES) {
-                        if (simDraft.players[playerIdx].leader.name === synergy.leader && sortedLore[replacementIdx].name === synergy.lore) {
-                          const bonus = typeof synergy.bonus === 'function' ? synergy.bonus(simDraft.numPlayers) : synergy.bonus;
-                          replacementScore += bonus;
-                        }
-                      }
-                    }
-                    opportunityCost = cardScore - replacementScore;
-                  } else {
-                    opportunityCost = cardScore;
-                  }
-                }
-                if (opportunityCost > bestOpportunityCost) {
-                  bestOpportunityCost = opportunityCost;
-                  bestCard = card;
-                }
-              }
-              return bestCard;
-            }
-            const best = getSimBestPick(drafterIdx);
-            if (!best) break;
-            if (best.pickType === "leader") {
-              player.leader = best;
-              simDraft.availableLeaders = simDraft.availableLeaders.filter(l => l.name !== best.name);
-            } else {
-              player.lore.push(best);
-              simDraft.availableLore = simDraft.availableLore.filter(l => l.name !== best.name);
-            }
-            simDraft.pickIndex++;
-            picks++;
-            if (picks > 100) break; // safety
-          }
-          completed = simDraft.players.every((p, idx) => p.leader && p.lore.length === getLoreCountForPlayer(idx, simDraft));
-          if (completed) {
-            for (let i = 0; i < numPlayers; i++) {
-              const p = simDraft.players[i];
-              results.push({
-                sim: sim + 1,
-                draftOrder: order,
-                player: i + 1,
-                leader: p.leader ? p.leader.name : "",
-                leaderScore: p.leader ? getWeightedScore(p.leader, "leader") : 0,
-                lore: p.lore.map(l => l.name).join(";"),
-                loreScore: p.lore.reduce((a, l) => a + getWeightedScore(l, "lore"), 0),
-                totalScore: playerTotalScore(p, i),
-              });
-            }
-            sim++;
-          }
-        }
-      }
-      const csv = [
-        "sim,draftOrder,player,leader,leaderScore,lore,loreScore,totalScore",
-        ...results.map(r => `${r.sim},${r.draftOrder},${r.player},${r.leader},${r.leaderScore},${r.lore},${r.loreScore},${r.totalScore}`)
-      ].join("\n");
-      const blob = new Blob([csv], { type: "text/csv" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = "draft_simulation_results.csv";
-      document.body.appendChild(a);
-      a.click();
-      setTimeout(() => {
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-      }, 100);
-    });
-  }
+  // (Simulate Drafts UI removed)
 
   function shuffle(arr) {
     for (let i = arr.length - 1; i > 0; i--) {
