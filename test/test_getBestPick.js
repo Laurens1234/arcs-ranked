@@ -83,6 +83,20 @@ function getBestPickMini(draft, playerIdx, SYNERGIES) {
           if (rank>=0 && rank < picksBeforeMyNextLore) score = Infinity;
         }
       }
+      // If multiple positive-bonus leaders pair with this lore and opponents
+      // cannot take all of them before my next leader pick, treat the best
+      // matching leader bonus as effectively guaranteed and add it to score.
+      const matchingLeaders = draft.availableLeaders.filter(l => SYNERGIES.some(s => s.lore === card.name && s.leader === l.name && (typeof s.bonus === 'function' ? s.bonus(draft.numPlayers) : s.bonus) > 0));
+      if (matchingLeaders.length > 0) {
+        const matchingBonuses = matchingLeaders.map(l => {
+          const s = SYNERGIES.find(x => x.leader === l.name && x.lore === card.name);
+          return typeof s.bonus === 'function' ? s.bonus(draft.numPlayers) : s.bonus;
+        });
+        const maxBonus = Math.max(...matchingBonuses);
+        if (matchingLeaders.length > picksBeforeMyNextLeader) {
+          score += maxBonus;
+        }
+      }
       if (competitorsForLore===0 && !player.leader) score -= 100;
     }
     if (score>bestScore) { bestScore = score; best = card; }
@@ -125,5 +139,27 @@ export async function runTests() {
     draft.lorePerPlayer = 1;
     const pick = getBestPickMini(draft, 0, SYNERGIES);
     assert.strictEqual(pick.pickType, 'leader');
+  })();
+
+  // Test 4: multiple matching leaders guarantee a lore synergy => pick the lore
+  (function(){
+    const SY = [
+      { leader: 'Upstart', lore: "Tycoon's Ambition", bonus: 3 },
+      { leader: 'Demagogue', lore: "Tycoon's Ambition", bonus: 6 }
+    ];
+    const draft = makeDraft({ numPlayers: 4,
+      availableLeaders: [makeEntry('Fuel-Drinker',9), makeEntry('Upstart',8.7), makeEntry('Demagogue',5.7)],
+      availableLore: [makeEntry("Tycoon's Ambition",4), makeEntry('Seeker Torpedoes',5)],
+      order: [4,3,2,1]
+    });
+    // Set current pick to player 2 (order index 2)
+    draft.pickIndex = 2;
+    // Player states: player1 no leader, player2 (current) needs leader+lore, player3 and 4 already have leaders
+    draft.players[2].leader = { name: 'Noble' };
+    draft.players[3].leader = { name: 'Anarchist' };
+    draft.lorePerPlayer = 2;
+    const pick = getBestPickMini(draft, 1, SY);
+    assert.strictEqual(pick.pickType, 'lore');
+    assert.strictEqual(pick.name, "Tycoon's Ambition");
   })();
 }

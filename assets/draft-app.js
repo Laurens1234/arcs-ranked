@@ -1366,9 +1366,42 @@ function getBestPick(playerIdx) {
   const picksBeforeMyNextLeader = countCategoryPicksBeforeNextTurn(draft, playerIdx, 'leader', getLoreCountForPlayer);
   const picksBeforeMyNextLore = countCategoryPicksBeforeNextTurn(draft, playerIdx, 'lore', getLoreCountForPlayer);
 
-  // Sort available pools by value descending
-  const sortedLeaders = [...draft.availableLeaders].sort((a, b) => b.value - a.value);
-  const sortedLore = [...draft.availableLore].sort((a, b) => b.value - a.value);
+  // Compute effective values that include only immediate synergy with already-owned picks.
+  // Guaranteed-partner boosts (where multiple partners imply one will remain) are
+  // calculated separately later as a marginal bonus so comparisons between options
+  // remain apples-to-apples.
+  function effectiveLeaderValueNoGuarantee(entry) {
+    let v = getWeightedScore(entry, "leader");
+    if (!player.leader) {
+      for (const synergy of SYNERGIES) {
+        if (entry.name === synergy.leader) {
+          const hasLore = player.lore.some(l => l.name === synergy.lore);
+          if (hasLore) {
+            const bonus = typeof synergy.bonus === 'function' ? synergy.bonus(draft.numPlayers) : synergy.bonus;
+            v += bonus;
+          }
+        }
+      }
+    }
+    return v;
+  }
+
+  function effectiveLoreValueNoGuarantee(entry) {
+    let v = getWeightedScore(entry, "lore");
+    if (player.leader) {
+      for (const synergy of SYNERGIES) {
+        if (player.leader.name === synergy.leader && entry.name === synergy.lore) {
+          const bonus = typeof synergy.bonus === 'function' ? synergy.bonus(draft.numPlayers) : synergy.bonus;
+          v += bonus;
+        }
+      }
+    }
+    return v;
+  }
+
+  // Use "no guarantee" sorts to compute realistic replacements (unboosted)
+  const sortedLeadersNo = [...draft.availableLeaders].sort((a, b) => effectiveLeaderValueNoGuarantee(b) - effectiveLeaderValueNoGuarantee(a));
+  const sortedLoreNo = [...draft.availableLore].sort((a, b) => effectiveLoreValueNoGuarantee(b) - effectiveLoreValueNoGuarantee(a));
 
   let bestCard = null;
   let bestOpportunityCost = -Infinity;
@@ -1411,38 +1444,15 @@ function getBestPick(playerIdx) {
       }
       const leadersTakenBefore = Math.min(competitorsForLeader, picksBeforeMyNextLeader);
       const replacementIdx = leadersTakenBefore;
-      // If this leader would complete a synergy and opponents could take it before
-      // my next leader pick, guarantee it by forcing a very high opportunity cost
-      if (!player.leader) {
-        for (const synergy of SYNERGIES) {
-          if (card.name === synergy.leader) {
-            // Does player already have the matching lore?
-            const hasLore = player.lore.some(l => l.name === synergy.lore);
-            if (hasLore) {
-              // Find this leader's rank among sorted leaders
-              const rank = sortedLeaders.findIndex(l => l.name === card.name);
-              if (rank >= 0 && rank < picksBeforeMyNextLeader) {
-                opportunityCost = Number.POSITIVE_INFINITY; // guarantee pick now
-                break;
-              }
-            }
-          }
-        }
-        if (opportunityCost === Number.POSITIVE_INFINITY) {
-          // choose immediately, skip rest of evaluation for this card
-          if (opportunityCost > bestOpportunityCost) {
-            bestOpportunityCost = opportunityCost;
-            bestCard = card;
-          }
-          continue;
-        }
-      }
-      if (replacementIdx < sortedLeaders.length) {
-        let replacementScore = getWeightedScore(sortedLeaders[replacementIdx], "leader");
-        // Add synergy bonus for replacement
+      // Use the unboosted replacement ranking to compute the realistic replacement
+      // score, then add a separate guaranteed-partner bonus if multiple positive
+      // partners imply at least one will remain.
+      if (replacementIdx < sortedLeadersNo.length) {
+        let replacementScore = getWeightedScore(sortedLeadersNo[replacementIdx], "leader");
+        // Add synergy bonus for replacement coming from already-owned lore
         if (!player.leader) {
           for (const synergy of SYNERGIES) {
-            if (sortedLeaders[replacementIdx].name === synergy.leader) {
+            if (sortedLeadersNo[replacementIdx].name === synergy.leader) {
               const hasLore = player.lore.some(l => l.name === synergy.lore);
               if (hasLore) {
                 const bonus = typeof synergy.bonus === 'function' ? synergy.bonus(draft.numPlayers) : synergy.bonus;
@@ -1450,20 +1460,24 @@ function getBestPick(playerIdx) {
               }
             }
           }
-          // If no other players need lore, and synergistic lore is available, add bonus for guaranteed future synergy
-          if (competitorsForLore === 0) {
-            for (const synergy of SYNERGIES) {
-              if (sortedLeaders[replacementIdx].name === synergy.leader) {
-                const loreAvailable = draft.availableLore.some(l => l.name === synergy.lore);
-                if (loreAvailable) {
-                  const bonus = typeof synergy.bonus === 'function' ? synergy.bonus(draft.numPlayers) : synergy.bonus;
-                  replacementScore += bonus;
-                }
-              }
-            }
-          }
         }
-        opportunityCost = cardScore - replacementScore;
+        const oc_noBoost = cardScore - replacementScore;
+        // Compute guaranteed partner net benefit (partner lore value + synergy - replacement lore value)
+        let guaranteedBonus = 0;
+        const matchingLores = draft.availableLore.filter(l => SYNERGIES.some(s => s.leader === card.name && s.lore === l.name && (typeof s.bonus === 'function' ? s.bonus(draft.numPlayers) : s.bonus) > 0));
+        if (matchingLores.length > picksBeforeMyNextLore) {
+          const replacementLoreIdx = Math.min(competitorsForLore, picksBeforeMyNextLore);
+          const replacementLore = sortedLoreNo[replacementLoreIdx];
+          const replacementLoreVal = replacementLore ? effectiveLoreValueNoGuarantee(replacementLore) : 0;
+          const nets = matchingLores.map(l => {
+            const s = SYNERGIES.find(x => x.leader === card.name && x.lore === l.name);
+            const bonus = typeof s.bonus === 'function' ? s.bonus(draft.numPlayers) : s.bonus;
+            const partnerVal = getWeightedScore(l, "lore") + bonus;
+            return partnerVal - replacementLoreVal;
+          });
+          guaranteedBonus = Math.max(0, ...nets);
+        }
+        opportunityCost = oc_noBoost + guaranteedBonus;
       } else {
         opportunityCost = cardScore;
       }
@@ -1497,78 +1511,39 @@ function getBestPick(playerIdx) {
       }
       const loreTakenBefore = Math.min(competitorsForLore, picksBeforeMyNextLore);
       const replacementIdx = loreTakenBefore;
-      // If this lore would complete a synergy and opponents could take it before
-      // my next lore pick, guarantee it by forcing a very high opportunity cost
-      if (player.leader) {
-        for (const synergy of SYNERGIES) {
-          if (player.leader.name === synergy.leader && card.name === synergy.lore) {
-            const rank = sortedLore.findIndex(l => l.name === card.name);
-            if (rank >= 0 && rank < picksBeforeMyNextLore) {
-              opportunityCost = Number.POSITIVE_INFINITY;
-              break;
-            }
-          }
-        }
-        if (opportunityCost === Number.POSITIVE_INFINITY) {
-          if (opportunityCost > bestOpportunityCost) {
-            bestOpportunityCost = opportunityCost;
-            bestCard = card;
-          }
-          continue;
-        }
-      }
-      if (replacementIdx < sortedLore.length) {
-        let replacementScore = getWeightedScore(sortedLore[replacementIdx], "lore");
-        // Add synergy bonus for replacement
+      // Compute replacement without guaranteed boosts, then add any guaranteed
+      // partner bonus separately.
+      if (replacementIdx < sortedLoreNo.length) {
+        let replacementScore = getWeightedScore(sortedLoreNo[replacementIdx], "lore");
         if (player.leader) {
           for (const synergy of SYNERGIES) {
-        // Also: if multiple lore partners exist for this leader, and opponents
-        // cannot take all of them before my next lore pick, treat synergy as guaranteed
-        const matchingLores = draft.availableLore.filter(l => SYNERGIES.some(s => s.leader === card.name && s.lore === l.name));
-        if (matchingLores.length > 0) {
-          if (matchingLores.length > picksBeforeMyNextLore) {
-            opportunityCost = Number.POSITIVE_INFINITY;
-            if (opportunityCost > bestOpportunityCost) {
-              bestOpportunityCost = opportunityCost;
-              bestCard = card;
-            }
-            continue;
-          }
-        }
-            if (player.leader.name === synergy.leader && sortedLore[replacementIdx].name === synergy.lore) {
+            if (player.leader.name === synergy.leader && sortedLoreNo[replacementIdx].name === synergy.lore) {
               const bonus = typeof synergy.bonus === 'function' ? synergy.bonus(draft.numPlayers) : synergy.bonus;
               replacementScore += bonus;
             }
           }
-        } else if (competitorsForLeader === 0) {
-          // If no other players need leader, and synergistic leader is available, add bonus for guaranteed future synergy
-          for (const synergy of SYNERGIES) {
-            if (sortedLore[replacementIdx].name === synergy.lore) {
-              const leaderAvailable = draft.availableLeaders.some(l => l.name === synergy.leader);
-              if (leaderAvailable) {
-                const bonus = typeof synergy.bonus === 'function' ? synergy.bonus(draft.numPlayers) : synergy.bonus;
-                replacementScore += bonus;
-              }
-            }
-          }
         }
-        opportunityCost = cardScore - replacementScore;
+        const oc_noBoost = cardScore - replacementScore;
+        // Compute guaranteed partner net benefit for lore (leader value + synergy - replacement leader value)
+        let guaranteedBonus = 0;
+        const matchingLeadersEarly = draft.availableLeaders.filter(l => SYNERGIES.some(s => s.lore === card.name && s.leader === l.name && (typeof s.bonus === 'function' ? s.bonus(draft.numPlayers) : s.bonus) > 0));
+        if (matchingLeadersEarly.length > picksBeforeMyNextLeader) {
+          const replacementLeaderIdx = Math.min(competitorsForLeader, picksBeforeMyNextLeader);
+          const replacementLeader = sortedLeadersNo[replacementLeaderIdx];
+          const replacementLeaderVal = replacementLeader ? effectiveLeaderValueNoGuarantee(replacementLeader) : 0;
+          const nets = matchingLeadersEarly.map(l => {
+            const s = SYNERGIES.find(x => x.lore === card.name && x.leader === l.name);
+            const bonus = typeof s.bonus === 'function' ? s.bonus(draft.numPlayers) : s.bonus;
+            const leaderVal = getWeightedScore(l, "leader") + bonus;
+            return leaderVal - replacementLeaderVal;
+          });
+          guaranteedBonus = Math.max(0, ...nets);
+        }
+        opportunityCost = oc_noBoost + guaranteedBonus;
       } else {
         opportunityCost = cardScore;
       }
-      // Also: if multiple leader partners exist for this lore, and opponents
-      // cannot take all of them before my next leader pick, treat synergy as guaranteed
-      const matchingLeaders = draft.availableLeaders.filter(l => SYNERGIES.some(s => s.lore === card.name && s.leader === l.name));
-      if (matchingLeaders.length > 0) {
-        if (matchingLeaders.length > picksBeforeMyNextLeader) {
-          opportunityCost = Number.POSITIVE_INFINITY;
-          if (opportunityCost > bestOpportunityCost) {
-            bestOpportunityCost = opportunityCost;
-            bestCard = card;
-          }
-          continue;
-        }
-      }
+      // (matchingLeaders handled above to boost cardScore when appropriate)
       // If no other players need lore, prefer leader picks first (deprioritize lore)
       if (competitorsForLore === 0 && !player.leader) {
         opportunityCost -= 100; // strong penalty so leader is chosen instead
