@@ -3,6 +3,7 @@ import yaml from "https://cdn.jsdelivr.net/npm/js-yaml@4.1.0/+esm";
 import Papa from "https://cdn.jsdelivr.net/npm/papaparse@5.4.1/+esm";
 import { Community_DATA } from "./community-data.js";
 import { CONFIG } from "./config.js";
+import { countCategoryPicksBeforeNextTurn } from "./draft-core.js";
 
 // ========== DOM ==========
 const el = {
@@ -546,7 +547,7 @@ function initSetupUI() {
         draft.handicaps = draft.handicaps.slice(0, draft.numPlayers);
       }
     }
-    updateDefaults();
+    updateDefaults(true);
     updateSeatButtons();
     updateHandicapSliders();
     if (draft.lorePerPlayer === "custom") {
@@ -570,7 +571,7 @@ function initSetupUI() {
       // Set all custom counts to the selected value
       draft.customLoreCounts = Array(draft.numPlayers).fill(parseInt(val));
     }
-    updateDefaults();
+    updateDefaults(true);
     updatePoolCounts();
   });
 
@@ -679,15 +680,17 @@ function setupBtnGroup(container, onChange) {
   });
 }
 
-function updateDefaults() {
+function updateDefaults(keepSelections = false) {
   const n = draft.numPlayers;
   el.leaderPoolSize.value = n + 1;
   const totalLoreNeeded = draft.lorePerPlayer === "custom" 
     ? draft.customLoreCounts.reduce((sum, count) => sum + count, 0)
     : n * draft.lorePerPlayer;
   el.lorePoolSize.value = totalLoreNeeded + 1;
-  selectedLeaders.clear();
-  selectedLore.clear();
+  if (!keepSelections) {
+    selectedLeaders.clear();
+    selectedLore.clear();
+  }
   renderPoolCards();
   updatePoolCounts();
   validateStartButton();
@@ -1360,6 +1363,9 @@ function getBestPick(playerIdx) {
     if (draft.players[i].lore.length < getLoreCountForPlayer(i)) competitorsForLore++;
   }
 
+  const picksBeforeMyNextLeader = countCategoryPicksBeforeNextTurn(draft, playerIdx, 'leader', getLoreCountForPlayer);
+  const picksBeforeMyNextLore = countCategoryPicksBeforeNextTurn(draft, playerIdx, 'lore', getLoreCountForPlayer);
+
   // Sort available pools by value descending
   const sortedLeaders = [...draft.availableLeaders].sort((a, b) => b.value - a.value);
   const sortedLore = [...draft.availableLore].sort((a, b) => b.value - a.value);
@@ -1367,9 +1373,8 @@ function getBestPick(playerIdx) {
   let bestCard = null;
   let bestOpportunityCost = -Infinity;
 
-  // Number of picks between my current turn and my next turn
-  // (in a round, each other player picks once)
-  const picksBeforeMyNextTurn = draft.numPlayers - 1;
+  // Number of picks between my current turn and my next turn (total picks)
+  const picksBeforeMyNextTurn = draft.order.length - 1;
 
   for (const card of cards) {
     let opportunityCost;
@@ -1404,7 +1409,7 @@ function getBestPick(playerIdx) {
           }
         }
       }
-      const leadersTakenBefore = Math.min(competitorsForLeader, picksBeforeMyNextTurn);
+      const leadersTakenBefore = Math.min(competitorsForLeader, picksBeforeMyNextLeader);
       const replacementIdx = leadersTakenBefore;
       if (replacementIdx < sortedLeaders.length) {
         let replacementScore = getWeightedScore(sortedLeaders[replacementIdx], "leader");
@@ -1460,7 +1465,7 @@ function getBestPick(playerIdx) {
           }
         }
       }
-      const loreTakenBefore = Math.min(competitorsForLore, picksBeforeMyNextTurn);
+      const loreTakenBefore = Math.min(competitorsForLore, picksBeforeMyNextLore);
       const replacementIdx = loreTakenBefore;
       if (replacementIdx < sortedLore.length) {
         let replacementScore = getWeightedScore(sortedLore[replacementIdx], "lore");

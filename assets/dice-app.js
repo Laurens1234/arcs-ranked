@@ -1223,18 +1223,17 @@ function createDieElement(type, faceIndex = null) {
   return die;
 }
 
-// Theme toggle
+// Theme toggle (use shared arcs-theme key so pages stay linked)
 const themeToggle = document.getElementById('themeToggle');
-const html = document.documentElement;
 
-const savedTheme = localStorage.getItem('theme') || 'dark';
-html.setAttribute('data-theme', savedTheme);
+const savedTheme = localStorage.getItem('arcs-theme') || 'dark';
+document.documentElement.dataset.theme = savedTheme;
 
 themeToggle.addEventListener('click', () => {
-  const currentTheme = html.getAttribute('data-theme');
+  const currentTheme = document.documentElement.dataset.theme || 'dark';
   const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
-  html.setAttribute('data-theme', newTheme);
-  localStorage.setItem('theme', newTheme);
+  document.documentElement.dataset.theme = newTheme;
+  localStorage.setItem('arcs-theme', newTheme);
 });
 
 // Advanced mode toggle
