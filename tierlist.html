@@ -53,14 +53,40 @@
       <div class="container">
         <div class="tabs">
           <div class="main-tabs">
-            <button class="tab active" data-tab="leaders">Leaders</button>
-            <button class="tab" data-tab="lore">Lore</button>
-            <button class="tab" data-tab="basecourt">Base Court</button>
+            <button class="tab active" data-tab="base">Base</button>
+            <button class="tab" data-tab="campaign">Campaign</button>
+          </div>
+          <div id="baseSubTabs" class="sub-tabs" style="display:none">
+            <button class="sub-tab base-sub-tab active" data-subtab="leaders">Leaders</button>
+            <button class="sub-tab base-sub-tab" data-subtab="lore">Lore</button>
+            <button class="sub-tab base-sub-tab" data-subtab="basecourt">Base Court</button>
           </div>
           <div id="leaderSubTabs" class="sub-tabs" style="display:none">
             <button class="sub-tab active" data-subtab="3p">3P</button>
             <button class="sub-tab" data-subtab="4p">4P</button>
           </div>
+          <div id="campaignSubTabs" class="sub-tabs" style="display:none">
+            <button class="sub-tab campaign-sub-tab" data-subtab="fate">Fates</button>
+            <button class="sub-tab campaign-sub-tab" data-subtab="lores">Lore</button>
+            <button class="sub-tab campaign-sub-tab" data-subtab="guildvox">Guild &amp; Vox</button>
+          </div>
+          <div id="fateFilters" style="display:none;margin-top:8px;gap:8px;align-items:center;">
+            <label style="font-size:0.85rem;margin-right:8px"><input type="checkbox" id="fateFilterA" checked /> A Fates</label>
+            <label style="font-size:0.85rem;margin-right:8px"><input type="checkbox" id="fateFilterB" checked /> B Fates</label>
+            <label style="font-size:0.85rem;margin-right:8px"><input type="checkbox" id="fateFilterC" checked /> C Fates</label>
+          </div>
+            <div id="campaignGuildVoxFilters" style="display:none;margin-top:8px;gap:8px;align-items:center;">
+              <label style="font-size:0.85rem;margin-right:8px"><input type="checkbox" id="guildFilterVox" checked /> Vox</label>
+              <label style="font-size:0.85rem;margin-right:8px"><input type="checkbox" id="guildFilterMaterial" checked /> Material</label>
+              <label style="font-size:0.85rem;margin-right:8px"><input type="checkbox" id="guildFilterFuel" checked /> Fuel</label>
+              <label style="font-size:0.85rem;margin-right:8px"><input type="checkbox" id="guildFilterWeapon" checked /> Weapon</label>
+              <label style="font-size:0.85rem;margin-right:8px"><input type="checkbox" id="guildFilterRelic" checked /> Relic</label>
+              <label style="font-size:0.85rem;margin-right:8px"><input type="checkbox" id="guildFilterPsionic" checked /> Psionic</label>
+            </div>
+            <div id="campaignLoresFilters" style="display:none;margin-top:8px;gap:8px;align-items:center;">
+              <label style="font-size:0.85rem;margin-right:8px"><input type="checkbox" id="loreFilterDeck" checked /> Lore Deck</label>
+              <label style="font-size:0.85rem;margin-right:8px"><input type="checkbox" id="loreFilterFates" checked /> Fate Lore</label>
+            </div>
         </div>
         <div class="controls">
           <button id="editBtn" class="btn-compare">Edit</button>
@@ -154,6 +180,17 @@
 
         <section id="basecourtSection" class="section hidden">
           <div id="basecourtTierList" class="personal-tier-list"></div>
+        </section>
+
+        <section id="fateSection" class="section hidden">
+          <div id="fateTierList" class="personal-tier-list"></div>
+        </section>
+
+        <section id="campaignGuildVoxSection" class="section hidden">
+          <div id="campaignGuildVoxTierList" class="personal-tier-list"></div>
+        </section>
+        <section id="campaignLoresSection" class="section hidden">
+          <div id="campaignLoresTierList" class="personal-tier-list"></div>
         </section>
       </div>
     </main>

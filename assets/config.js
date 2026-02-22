@@ -1,6 +1,8 @@
 export const CONFIG = {
   // Use local YAML file
   cardsYamlUrl: "./arcsbasegame.yml",
+  // Optional additional YAML with expansion cards (we'll load only Fate-tagged cards from this file)
+  blightedReachYamlUrl: "./blightedreach.yml",
 
   // The YAML has `image: BC01` etc; we render `${cardImagesBaseUrl}${image}.png`
   cardImagesBaseUrl:

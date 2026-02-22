@@ -9,14 +9,38 @@ const el = {
   leaders3pTierList: document.getElementById("leaders3pTierList"),
   leaders4pTierList: document.getElementById("leaders4pTierList"),
   loreTierList: document.getElementById("loreTierList"),
+  fateTierList: document.getElementById("fateTierList"),
+  campaignGuildVoxTierList: document.getElementById("campaignGuildVoxTierList"),
+  campaignLoresTierList: document.getElementById("campaignLoresTierList"),
   basecourtTierList: document.getElementById("basecourtTierList"),
   leaders3pSection: document.getElementById("leaders3pSection"),
   leaders4pSection: document.getElementById("leaders4pSection"),
   loreSection: document.getElementById("loreSection"),
+  fateSection: document.getElementById("fateSection"),
+  campaignGuildVoxSection: document.getElementById("campaignGuildVoxSection"),
+  campaignLoresSection: document.getElementById("campaignLoresSection"),
   basecourtSection: document.getElementById("basecourtSection"),
   tabs: document.querySelectorAll(".tab"),
   subTabs: document.querySelectorAll(".sub-tab"),
   leaderSubTabs: document.getElementById("leaderSubTabs"),
+  baseSubTabs: document.getElementById("baseSubTabs"),
+  baseSubTabsButtons: document.querySelectorAll('.base-sub-tab'),
+  campaignSubTabs: document.getElementById('campaignSubTabs'),
+  campaignSubTabsButtons: document.querySelectorAll('.campaign-sub-tab'),
+  fateFilters: document.getElementById('fateFilters'),
+  fateFilterA: document.getElementById('fateFilterA'),
+  fateFilterB: document.getElementById('fateFilterB'),
+  fateFilterC: document.getElementById('fateFilterC'),
+  campaignLoresFilters: document.getElementById('campaignLoresFilters'),
+  loreFilterDeck: document.getElementById('loreFilterDeck'),
+  loreFilterFates: document.getElementById('loreFilterFates'),
+  campaignGuildVoxFilters: document.getElementById('campaignGuildVoxFilters'),
+  guildFilterVox: document.getElementById('guildFilterVox'),
+  guildFilterMaterial: document.getElementById('guildFilterMaterial'),
+  guildFilterFuel: document.getElementById('guildFilterFuel'),
+  guildFilterWeapon: document.getElementById('guildFilterWeapon'),
+  guildFilterRelic: document.getElementById('guildFilterRelic'),
+  guildFilterPsionic: document.getElementById('guildFilterPsionic'),
   themeToggle: document.getElementById("themeToggle"),
   downloadBtn: document.getElementById("downloadBtn"),
   editBtn: document.getElementById("editBtn"),
@@ -61,9 +85,24 @@ let leaderEntries3P = []; // current 3P leader entries (mutable in edit mode)
 let leaderEntries4P = []; // current 4P leader entries (mutable in edit mode)
 let loreEntries = [];   // current lore entries (mutable in edit mode)
 let basecourtEntries = []; // current base court entries (mutable in edit mode)
+let fateEntries = []; // current fate entries (cards with Fate tag)
+let guildVoxEntries = []; // campaign: cards with Guild or Vox tags (unique names)
+let campaignLoresEntries = []; // campaign: lores from base game only
+let blightedReachRaw = []; // raw cards loaded from blightedreach.yml (unfiltered)
 let allCards = [];       // loaded card data
-let hiddenTiers = new Set(); // tiers the user has removed
-let visibleEmptyTiers = new Set(); // empty tiers that should be shown as rows
+// Track hidden/visible-empty tiers per section type so changes affect only one tab
+const hiddenTiersByType = new Map();
+const visibleEmptyTiersByType = new Map();
+
+function getHiddenTiers(type) {
+  if (!hiddenTiersByType.has(type)) hiddenTiersByType.set(type, new Set());
+  return hiddenTiersByType.get(type);
+}
+
+function getVisibleEmptyTiers(type) {
+  if (!visibleEmptyTiersByType.has(type)) visibleEmptyTiersByType.set(type, new Set());
+  return visibleEmptyTiersByType.get(type);
+}
 let currentLeaderTab = '3p'; // current leader sub-tab
 
 // Touch drag and drop state
@@ -131,10 +170,11 @@ function toggleTheme() {
 
 // ========== Data Loading ==========
 async function loadCards() {
-  const text = await fetchText(CONFIG.cardsYamlUrl);
-  const data = yaml.load(text);
-  if (!Array.isArray(data)) throw new Error("Invalid YAML format");
-  return data
+  // Load base game cards first
+  const baseText = await fetchText(CONFIG.cardsYamlUrl);
+  const baseData = yaml.load(baseText);
+  if (!Array.isArray(baseData)) throw new Error("Invalid base game YAML format");
+  const baseCards = baseData
     .filter((c) => c && typeof c === "object" && c.name)
     .map((c) => ({
       id: c.id ?? null,
@@ -142,7 +182,42 @@ async function loadCards() {
       image: c.image ?? null,
       tags: Array.isArray(c.tags) ? c.tags : [],
       text: c.text ?? "",
+      source: 'base',
     }));
+
+  // Optionally load blighted reach -- keep the raw expansion set, but only merge Fate-tagged cards
+  let brRaw = [];
+  let brFate = [];
+  if (CONFIG.blightedReachYamlUrl) {
+    try {
+      const brText = await fetchText(CONFIG.blightedReachYamlUrl);
+      const brData = yaml.load(brText);
+      if (Array.isArray(brData)) {
+        brRaw = brData
+          .filter((c) => c && typeof c === "object" && c.name)
+          .map((c) => ({
+            id: c.id ?? null,
+            name: c.name ?? "",
+            image: c.image ?? null,
+            tags: Array.isArray(c.tags) ? c.tags : [],
+            text: c.text ?? "",
+            source: 'blighted'
+          }));
+        brFate = brRaw.filter((c) => Array.isArray(c.tags) && c.tags.includes("Fate"));
+      }
+    } catch (e) {
+      console.warn("Failed to load blighted reach YAML:", e);
+    }
+  }
+
+  // Keep a global copy of raw blighted reach cards for campaign-only sourcing
+  blightedReachRaw = brRaw;
+
+  // Merge: base cards first, then all blighted reach cards that don't duplicate base names
+  // This ensures lookups (import/share) can find expansion-only cards like Guild/Vox.
+  const existing = new Set(baseCards.map((c) => normalizeText(c.name)));
+  const combined = baseCards.concat(brRaw.filter((c) => !existing.has(normalizeText(c.name))));
+  return combined;
 }
 
 // Global touch cleanup
@@ -190,14 +265,11 @@ async function loadTierListSheet() {
 
 function parseTierListSheet(rows, cards) {
   // Sheet format: Name | Tier  OR  "Name,Tier" in single column
-  // Empty rows separate 3P leaders, 4P leaders, lore, and base court
-  // First row is header (Name, Tier) or (Name,Tier)
-  const leaders3P = [];
-  const leaders4P = [];
-  const lore = [];
-  const basecourt = [];
-  let section = 0; // 0 = 3P leaders, 1 = 4P leaders, 2 = lore, 3 = base court
-  let headerSkipped = false;
+  // Empty rows separate sections. Historically sheets had 4 sections
+  // (3P,4P,Lore,BaseCourt). Newer sheets may include a Fate section
+  // between Lore and BaseCourt. We'll split into raw sections and map
+  // them based on how many sections are present to remain backward
+  // compatible.
 
   // Build a lookup map: normalized name → card
   const cardMap = new Map();
@@ -205,11 +277,15 @@ function parseTierListSheet(rows, cards) {
     cardMap.set(normalizeText(card.name), card);
   }
 
+  const rawSections = [];
+  let currentIdx = 0;
+  rawSections[currentIdx] = [];
+  let headerSkipped = false;
+
   for (const row of rows) {
     let name, tier;
 
     if (row.length === 1) {
-      // Single column: "Name,Tier"
       const cell = (row[0] ?? "").trim();
       if (cell.includes(",")) {
         [name, tier] = cell.split(",", 2).map(s => s.trim());
@@ -218,11 +294,14 @@ function parseTierListSheet(rows, cards) {
         tier = "";
       }
     } else {
-      // Two columns: Name | Tier
       name = (row[0] ?? "").trim();
       tier = (row[1] ?? "").trim();
     }
-    tier = tier.toUpperCase();
+
+    // Normalize tier casing
+    tier = (tier || "").toUpperCase();
+    // Preserve the special-cased 'Unranked' value in its canonical form
+    if (tier === "UNRANKED") tier = "Unranked";
 
     // Skip header row
     if (!headerSkipped) {
@@ -232,36 +311,44 @@ function parseTierListSheet(rows, cards) {
       }
     }
 
-    // Empty row = separator between sections
+    // Empty row = new section separator (only after header)
     if (!name && !tier) {
       if (headerSkipped) {
-        section++;
-        if (section > 3) break; // Stop after base court section
+        currentIdx++;
+        rawSections[currentIdx] = rawSections[currentIdx] || [];
       }
       continue;
     }
 
-    if (!name || !tier) continue;
+    // Treat missing tier as Unranked (allow entries without explicit tier)
+    if (!name) continue;
+    if (!tier) tier = "Unranked";
 
     const card = cardMap.get(normalizeText(name));
-    const entry = {
-      name,
-      tier,
-      card: card ?? null,
-    };
-
-    if (section === 0) {
-      leaders3P.push(entry);
-    } else if (section === 1) {
-      leaders4P.push(entry);
-    } else if (section === 2) {
-      lore.push(entry);
-    } else if (section === 3) {
-      basecourt.push(entry);
-    }
+    const entry = { name, tier, card: card ?? null };
+    rawSections[currentIdx].push(entry);
   }
 
-  return { leaders3P, leaders4P, lore, basecourt };
+  // Map raw sections to named sections. If there are 5+ raw sections,
+  // we assume the order is [3P,4P,Lore,Fate,BaseCourt]. If 4, it's
+  // [3P,4P,Lore,BaseCourt] for backward compatibility.
+  const leaders3P = rawSections[0] || [];
+  const leaders4P = rawSections[1] || [];
+  const lore = rawSections[2] || [];
+  let fate = [];
+  let basecourt = [];
+  // Support additional campaign sections in exported CSVs. Export order is:
+  // 3P, 4P, Lore, BaseCourt, Fate, CampaignLores, CampaignGuildVox
+  basecourt = rawSections[3] || [];
+  if (rawSections.length >= 5) fate = rawSections[4] || [];
+  const campaignLores = rawSections[5] || [];
+  const campaignGuildVox = rawSections[6] || [];
+
+  const others = {};
+  if (campaignLores.length > 0) others['campaignLores'] = campaignLores;
+  if (campaignGuildVox.length > 0) others['campaignGuildVox'] = campaignGuildVox;
+
+  return { leaders3P, leaders4P, lore, fate, basecourt, others };
 }
 
 // ========== Rendering ==========
@@ -278,8 +365,11 @@ function buildTierListHTML(entries, container, type, sectionName) {
     grouped.set(tier, []);
   }
   grouped.set("Unranked", []);
+  const hiddenTiers = getHiddenTiers(type);
+  const visibleEmptyTiers = getVisibleEmptyTiers(type);
   for (const entry of entries) {
-    const t = TIER_ORDER.includes(entry.tier) ? entry.tier : entry.tier === "Unranked" ? "Unranked" : "D";
+    const tierVal = (typeof entry.tier === 'string' && entry.tier.trim().length) ? entry.tier : "Unranked";
+    const t = TIER_ORDER.includes(tierVal) ? tierVal : (tierVal === "Unranked" ? "Unranked" : "D");
     grouped.get(t).push(entry);
   }
 
@@ -447,10 +537,101 @@ function buildTierListHTML(entries, container, type, sectionName) {
   }
 }
 
+function getFilteredFateEntries() {
+  // Fate entries are grouped by index ranges: A 1-8, B 9-16, C 17-24 (1-based)
+  if (!Array.isArray(fateEntries)) return [];
+  const a = el.fateFilterA && el.fateFilterA.checked;
+  const b = el.fateFilterB && el.fateFilterB.checked;
+  const c = el.fateFilterC && el.fateFilterC.checked;
+  if (a && b && c) return fateEntries;
+  const res = [];
+  for (let i = 0; i < fateEntries.length; i++) {
+    const entry = fateEntries[i];
+    let num = null;
+    if (entry && entry.card && entry.card.id) {
+      const m = String(entry.card.id).match(/(\d+)/);
+      if (m) num = parseInt(m[1], 10);
+    }
+    // If we can parse a numeric id, use it to determine group; otherwise fall back to index order
+    if (num !== null && !isNaN(num)) {
+      if (num >= 1 && num <= 8 && a) res.push(entry);
+      else if (num >= 9 && num <= 16 && b) res.push(entry);
+      else if (num >= 17 && num <= 24 && c) res.push(entry);
+    } else {
+      const idx1 = i + 1;
+      if (idx1 >= 1 && idx1 <= 8 && a) res.push(entry);
+      else if (idx1 >= 9 && idx1 <= 16 && b) res.push(entry);
+      else if (idx1 >= 17 && idx1 <= 24 && c) res.push(entry);
+    }
+  }
+  return res;
+}
+
+function getFilteredCampaignLoresEntries() {
+  if (!Array.isArray(campaignLoresEntries)) return [];
+  const deck = el.loreFilterDeck && el.loreFilterDeck.checked;
+  const fates = el.loreFilterFates && el.loreFilterFates.checked;
+  if (deck && fates) return campaignLoresEntries;
+  const res = [];
+  for (const entry of campaignLoresEntries) {
+    const card = entry.card;
+    let isDeck = false;
+    if (card && card.id) {
+      const m = String(card.id).match(/ARCS-L0*(\d+)/i);
+      if (m) {
+        const n = parseInt(m[1], 10);
+        if (!isNaN(n) && n >= 1 && n <= 28) isDeck = true;
+      }
+    }
+    if (isDeck && deck) res.push(entry);
+    else if (!isDeck && fates) res.push(entry);
+  }
+  return res;
+}
+
+function getFilteredGuildVoxEntries() {
+  if (!Array.isArray(guildVoxEntries)) return [];
+  // Guild is always included; only Vox has a toggle now
+  const vox = el.guildFilterVox && el.guildFilterVox.checked;
+  const mat = el.guildFilterMaterial && el.guildFilterMaterial.checked;
+  const fuel = el.guildFilterFuel && el.guildFilterFuel.checked;
+  const weap = el.guildFilterWeapon && el.guildFilterWeapon.checked;
+  const relic = el.guildFilterRelic && el.guildFilterRelic.checked;
+  const psionic = el.guildFilterPsionic && el.guildFilterPsionic.checked;
+
+  // If Vox toggle is off, still show Guild entries; if Vox toggle is on, include Vox entries too
+
+  const res = [];
+  for (const entry of guildVoxEntries) {
+    const card = entry.card;
+    // If no card or tags, skip (can't determine role/type)
+    const tags = Array.isArray(card && card.tags) ? card.tags : [];
+
+    // Exclude by type if the corresponding checkbox is OFF
+    if (!mat && tags.includes('Material')) continue;
+    if (!fuel && tags.includes('Fuel')) continue;
+    if (!weap && tags.includes('Weapon')) continue;
+    if (!relic && tags.includes('Relic')) continue;
+    if (!psionic && tags.includes('Psionic')) continue;
+
+    const isGuild = tags.includes('Guild');
+    const isVox = tags.includes('Vox');
+
+    if (isGuild) res.push(entry);
+    else if (isVox && vox) res.push(entry);
+  }
+  return res;
+}
+
 function createCardElement(entry, type) {
   const cardEl = document.createElement("div");
   cardEl.className = "personal-tier-card";
   cardEl.dataset.name = entry.name;
+
+  const isLeaders = typeof type === 'string' && type.startsWith('leaders');
+  const cardHeight = isLeaders ? 190 : 160;
+  // give leaders a modifier class for CSS if needed
+  if (isLeaders) cardEl.classList.add('personal-tier-card--leader');
 
   // Drag source
   cardEl.draggable = editMode;
@@ -614,7 +795,7 @@ function createCardElement(entry, type) {
       cardEl.style.alignItems = "center";
       cardEl.style.justifyContent = "center";
       cardEl.style.padding = "8px";
-      cardEl.style.height = "160px";
+      cardEl.style.height = `${cardHeight}px`;
       const fallback = document.createElement("span");
       fallback.style.color = "var(--text)";
       fallback.style.fontSize = "0.75rem";
@@ -629,7 +810,7 @@ function createCardElement(entry, type) {
     cardEl.style.alignItems = "center";
     cardEl.style.justifyContent = "center";
     cardEl.style.padding = "8px";
-    cardEl.style.height = "160px";
+    cardEl.style.height = `${cardHeight}px`;
     const fallback = document.createElement("span");
     fallback.style.color = "var(--text)";
     fallback.style.fontSize = "0.75rem";
@@ -707,6 +888,10 @@ function updateDragPreview() {
   document.querySelectorAll('.personal-tier-row.preview-empty-tier-row').forEach(el => {
     el.classList.remove('preview-empty-tier-row', 'preview-empty-tier-row-leaders');
   });
+  // Clear any inline sizing added during preview
+  document.querySelectorAll('.personal-tier-row').forEach(row => {
+    row.style.minHeight = '';
+  });
 
   // Calculate where the card would be inserted based on current mouse position
   let previewPosition = null;
@@ -732,15 +917,20 @@ function updateDragPreview() {
 
       // Mouse is inside the container - normal logic
 
-        // If this is an empty tier and mouse is over it, expand it for preview
+        // If this is an empty tier and mouse is over it, expand it for preview.
+        // Use the container's type (target tier) to decide leader sizing so
+        // dragging a Fate card onto a leaders tier expands it correctly.
         if (cardsInTargetTier.length === 0) {
-          const activeTab = document.querySelector('.tab.active').dataset.tab;
-          const isLeaders = activeTab === 'leaders';
+          const containerType = container.dataset.type || '';
+          const isLeaders = typeof containerType === 'string' && containerType.startsWith('leaders');
           container.classList.add('preview-empty-tier');
           container.parentElement.classList.add('preview-empty-tier-row');
-          if (isLeaders) {
-            container.parentElement.classList.add('preview-empty-tier-row-leaders');
-          }
+          if (isLeaders) container.parentElement.classList.add('preview-empty-tier-row-leaders');
+          // Determine card and tier sizing from container type so Fate tiers
+          // expand to Fate card height and Leaders expand to leader height.
+          const cardHeight = isLeaders ? 190 : 160; // match createCardElement sizing
+          const tierMin = cardHeight + 10; // small padding for tier container
+          container.parentElement.style.minHeight = `${tierMin}px`;
         }
 
         // Check each card to see if mouse is over it (including the dragged card's original position)
@@ -937,12 +1127,13 @@ function updateDragPreview() {
             };
           }
         } else if (cardsInTargetTier.length === 0) {
-          // Empty tier - center the preview card vertically
-          const activeTab = document.querySelector('.tab.active').dataset.tab;
-          const isLeaders = activeTab === 'leaders';
+          // Empty tier - center the preview card vertically.
+          // Determine sizing from the target container type (not active tab)
+          const containerType = container.dataset.type || '';
+          const isLeaders = typeof containerType === 'string' && containerType.startsWith('leaders');
           const cardHeight = isLeaders ? 190 : 160; // approximate card height
           const tierHeight = isLeaders ? 200 : 172;
-          const centeredTop = isLeaders ? containerRect.top : containerRect.top + (tierHeight - cardHeight) / 2;
+          const centeredTop = containerRect.top + (tierHeight - cardHeight) / 2;
           previewPosition = {
             left: containerRect.left + 6,
             top: centeredTop
@@ -1265,7 +1456,20 @@ document.addEventListener("drop", (e) => {
 });
 
 function moveCard(name, newTier, type, insertBefore = null) {
-  const entries = type === "leaders" ? (currentLeaderTab === '3p' ? leaderEntries3P : leaderEntries4P) : type === "lore" ? loreEntries : basecourtEntries;
+  // Normalize type to include leader subtab when applicable
+  let typeKey = type;
+  if (type && type.startsWith('leaders') && !type.includes('-')) {
+    typeKey = `leaders-${currentLeaderTab}`;
+  }
+
+  let entries = null;
+  if (typeKey === 'leaders-3p') entries = leaderEntries3P;
+  else if (typeKey === 'leaders-4p') entries = leaderEntries4P;
+  else if (typeKey === 'lore') entries = loreEntries;
+  else if (typeKey === 'basecourt') entries = basecourtEntries;
+  else if (typeKey === 'fate') entries = fateEntries;
+  else if (typeKey === 'campaign-lores') entries = campaignLoresEntries;
+  else if (typeKey === 'campaign-guildvox' || typeKey === 'campaign-guild-vox') entries = guildVoxEntries;
   const entryIndex = entries.findIndex((e) => e.name === name);
   if (entryIndex === -1) return;
   
@@ -1275,8 +1479,9 @@ function moveCard(name, newTier, type, insertBefore = null) {
   // Remove from current position
   entries.splice(entryIndex, 1);
   
-  // If the old tier is now empty, keep it visible as an empty tier
+  // If the old tier is now empty, keep it visible as an empty tier (per-type)
   const oldTierStillHasCards = entries.some(e => e.tier === oldTier);
+  const visibleEmptyTiers = getVisibleEmptyTiers(typeKey);
   if (!oldTierStillHasCards && !visibleEmptyTiers.has(oldTier)) {
     visibleEmptyTiers.add(oldTier);
   }
@@ -1326,10 +1531,40 @@ function moveCard(name, newTier, type, insertBefore = null) {
 }
 
 function removeTier(tier) {
-  // Check if this is a visible empty tier that should just be hidden from view
-  const entries = currentLeaderTab === '3p' ? leaderEntries3P : currentLeaderTab === '4p' ? leaderEntries4P : currentLeaderTab === 'lore' ? loreEntries : basecourtEntries;
-  const hasCards = entries.some(e => e.tier === tier);
-  
+  // Determine active main tab and subtab to scope the removal
+  const activeTabEl = Array.from(el.tabs).find(tab => tab.classList.contains('active'));
+  const activeTab = activeTabEl ? activeTabEl.dataset.tab : 'leaders';
+  const activeSubEl = Array.from(el.subTabs).find(subTab => subTab.classList.contains('active'));
+  const activeSub = activeSubEl ? activeSubEl.dataset.subtab : null;
+
+  // Pick entries for this active section
+  let entries = null;
+  if (activeTab === 'leaders') entries = (activeSub === '3p' ? leaderEntries3P : leaderEntries4P);
+  else if (activeTab === 'lore') entries = loreEntries;
+  else if (activeTab === 'basecourt') entries = basecourtEntries;
+  else if (activeTab === 'fate') entries = fateEntries;
+  else if (activeTab === 'campaign') {
+    const activeCamp = Array.from(el.campaignSubTabsButtons).find(b => b.classList.contains('active'));
+    const camp = activeCamp ? activeCamp.dataset.subtab : 'fate';
+    if (camp === 'lores') entries = campaignLoresEntries;
+    else if (camp === 'guildvox') entries = guildVoxEntries;
+    else entries = fateEntries;
+  }
+
+  let activeKey = activeTab;
+  if (activeTab === 'leaders') {
+    activeKey = activeSub ? `leaders-${activeSub}` : `leaders-${currentLeaderTab}`;
+  }
+  if (activeTab === 'campaign') {
+    const activeCamp = Array.from(el.campaignSubTabsButtons).find(b => b.classList.contains('active'));
+    const camp = activeCamp ? activeCamp.dataset.subtab : 'fate';
+    activeKey = camp === 'lores' ? 'campaign-lores' : (camp === 'guildvox' ? 'campaign-guildvox' : 'fate');
+  }
+  const visibleEmptyTiers = getVisibleEmptyTiers(activeKey);
+  const hiddenTiers = getHiddenTiers(activeKey);
+
+  const hasCards = entries ? entries.some(e => e.tier === tier) : false;
+
   if (!hasCards && visibleEmptyTiers.has(tier)) {
     // This is a visible empty tier, just remove it from visible set
     visibleEmptyTiers.delete(tier);
@@ -1337,28 +1572,63 @@ function removeTier(tier) {
     return;
   }
 
-  // Normal tier removal: move cards and hide tier
-  // Find the next visible tier below to move cards into
-  const visibleTiers = TIER_ORDER.filter((t) => !hiddenTiers.has(t) && t !== tier);
-  if (visibleTiers.length === 0) return; // can't remove the last tier
+  // Normal tier removal: move cards and hide tier (only within this section)
+  // Consider only tiers that are actually displayed in this section: not hidden
+  // AND either have cards or are explicitly visible-empty (in edit mode).
+  const visibleTiers = TIER_ORDER.filter((t) => {
+    if (t === tier) return false;
+    if (hiddenTiers.has(t)) return false;
+    const hasCardsInTier = entries ? entries.some(e => e.tier === t) : false;
+    const explicitlyVisibleEmpty = editMode && visibleEmptyTiers.has(t);
+    return hasCardsInTier || explicitlyVisibleEmpty;
+  });
 
   const tierIdx = TIER_ORDER.indexOf(tier);
-  // Pick the next lower visible tier, or the nearest above if none below
+  // Pick the next lower visible tier (index > tierIdx). If none, move to Unranked.
   let target = visibleTiers.find((t) => TIER_ORDER.indexOf(t) > tierIdx);
-  if (!target) target = visibleTiers[visibleTiers.length - 1];
+  if (!target) target = "Unranked";
 
-  // Move all cards from this tier to the target
-  for (const e of leaderEntries3P) {
-    if (e.tier === tier) e.tier = target;
-  }
-  for (const e of leaderEntries4P) {
-    if (e.tier === tier) e.tier = target;
-  }
-  for (const e of loreEntries) {
-    if (e.tier === tier) e.tier = target;
-  }
-  for (const e of basecourtEntries) {
-    if (e.tier === tier) e.tier = target;
+  if (entries) {
+    // Collect cards from the removed tier in their current order and remove them
+    const toMove = [];
+    for (let i = entries.length - 1; i >= 0; i--) {
+      if (entries[i].tier === tier) {
+        toMove.unshift(entries[i]);
+        entries.splice(i, 1);
+      }
+    }
+
+    if (toMove.length > 0) {
+      // Set moved entries' tier to the target
+      for (const m of toMove) m.tier = target;
+
+      // Rebuild entries grouped by tier order to ensure moved cards are placed
+      // at the end of the target tier while preserving relative order.
+      const buckets = new Map();
+      for (const t of [...TIER_ORDER, "Unranked"]) buckets.set(t, []);
+      for (const e of entries) {
+        const tierVal = (typeof e.tier === 'string' && e.tier.trim().length) ? e.tier : "Unranked";
+        const key = TIER_ORDER.includes(tierVal) ? tierVal : (tierVal === "Unranked" ? "Unranked" : "D");
+        if (!buckets.has(key)) buckets.set(key, []);
+        buckets.get(key).push(e);
+      }
+
+      // Insert moved cards into the target bucket (append to end)
+      if (!buckets.has(target)) buckets.set(target, []);
+      buckets.get(target).push(...toMove);
+
+      // Flatten buckets back into entries in TIER_ORDER order, then Unranked
+      const newEntries = [];
+      for (const t of TIER_ORDER) {
+        const arr = buckets.get(t) || [];
+        newEntries.push(...arr);
+      }
+      newEntries.push(...(buckets.get("Unranked") || []));
+
+      // Replace entries contents in-place
+      entries.length = 0;
+      entries.push(...newEntries);
+    }
   }
 
   hiddenTiers.add(tier);
@@ -1366,10 +1636,13 @@ function removeTier(tier) {
 }
 
 function rebuildCurrentView() {
-  buildTierListHTML(leaderEntries3P, el.leaders3pTierList, "leaders");
-  buildTierListHTML(leaderEntries4P, el.leaders4pTierList, "leaders");
+  buildTierListHTML(leaderEntries3P, el.leaders3pTierList, "leaders-3p", "3P Leaders");
+  buildTierListHTML(leaderEntries4P, el.leaders4pTierList, "leaders-4p", "4P Leaders");
   buildTierListHTML(loreEntries, el.loreTierList, "lore");
+  buildTierListHTML(getFilteredFateEntries(), el.fateTierList, "fate", "Fates");
   buildTierListHTML(basecourtEntries, el.basecourtTierList, "basecourt");
+  buildTierListHTML(getFilteredCampaignLoresEntries(), el.campaignLoresTierList, "campaign-lores", "Lore");
+  buildTierListHTML(getFilteredGuildVoxEntries(), el.campaignGuildVoxTierList, "campaign-guildvox", "Guild & Vox");
 }
 
 // ========== Edit Mode ==========
@@ -1380,7 +1653,43 @@ function toggleEditMode() {
   el.clearBtn.style.display = editMode ? "" : "none";
   // Clear visible empty tiers when entering edit mode
   if (editMode) {
-    visibleEmptyTiers.clear();
+    // Clear visible empty tiers for the currently active main tab only
+    const activeTabEl = Array.from(el.tabs).find(tab => tab.classList.contains('active'));
+    const activeTab = activeTabEl ? activeTabEl.dataset.tab : 'leaders';
+    const activeSubEl = Array.from(el.subTabs).find(subTab => subTab.classList.contains('active'));
+    const activeSub = activeSubEl ? activeSubEl.dataset.subtab : null;
+    let activeKey = activeTab;
+    if (activeKey === 'leaders') activeKey = activeSub ? `leaders-${activeSub}` : `leaders-${currentLeaderTab}`;
+    if (activeKey === 'campaign') {
+      const campActive = Array.from(el.campaignSubTabsButtons).find(b => b.classList.contains('active'));
+      const campSub = campActive ? campActive.dataset.subtab : 'fate';
+      activeKey = campSub === 'lores' ? 'campaign-lores' : (campSub === 'guildvox' ? 'campaign-guildvox' : 'fate');
+    }
+
+    const visibleEmpty = getVisibleEmptyTiers(activeKey);
+    visibleEmpty.clear();
+
+    // If this section has no entries at all, auto-show S through D tiers for quick setup
+    let entries = null;
+    const activeSubFinal = activeSub || currentLeaderTab;
+    if (activeTab === 'leaders') entries = (activeSubFinal === '3p' ? leaderEntries3P : leaderEntries4P);
+    else if (activeTab === 'lore') entries = loreEntries;
+    else if (activeTab === 'basecourt') entries = basecourtEntries;
+    else if (activeTab === 'fate') entries = fateEntries;
+    else if (activeTab === 'campaign') {
+      const campActive = Array.from(el.campaignSubTabsButtons).find(b => b.classList.contains('active'));
+      const campSub = campActive ? campActive.dataset.subtab : 'fate';
+      if (campSub === 'lores') entries = campaignLoresEntries;
+      else if (campSub === 'guildvox') entries = guildVoxEntries;
+      else entries = fateEntries;
+    }
+
+    // Treat a section as empty if it has no entries or only Unranked entries
+    const hasNonUnranked = entries && entries.some(e => (e.tier || '').toUpperCase() !== 'UNRANKED');
+    if (!entries || entries.length === 0 || !hasNonUnranked) {
+      const autoTiers = ['S', 'A', 'B', 'C', 'D'];
+      for (const t of autoTiers) visibleEmpty.add(t);
+    }
   }
   rebuildCurrentView();
 }
@@ -1442,6 +1751,70 @@ function clearTierList() {
   } else if (activeTab.dataset.tab === 'basecourt') {
     targetType = 'basecourt';
     targetEntries = basecourtEntries;
+  } else if (activeTab.dataset.tab === 'campaign') {
+    // Determine which campaign subtab is active
+    const activeCamp = Array.from(el.campaignSubTabsButtons).find(b => b.classList.contains('active'));
+    const camp = activeCamp ? activeCamp.dataset.subtab : 'fate';
+    if (camp === 'lores') {
+      targetType = 'campaign-lores';
+      // Load base YAML lores
+      loadCardsFromYAML('lore').then(cards => {
+        campaignLoresEntries.length = 0;
+        for (const c of cards) campaignLoresEntries.push({ name: c.name, tier: 'Unranked', card: c });
+        // reset visible/hidden tiers for this section
+        const activeMainKey = 'campaign-lores';
+        const visEmpty = getVisibleEmptyTiers(activeMainKey);
+        const hid = getHiddenTiers(activeMainKey);
+        visEmpty.clear(); hid.clear();
+        for (const t of ["S","A","B","C","D"]) visEmpty.add(t);
+        for (const t of ["SSS","SS","F"]) hid.add(t);
+        rebuildCurrentView();
+      });
+      return;
+    } else if (camp === 'fate') {
+      targetType = 'fate';
+      // Rebuild Fate entries from loaded cards (expansion + base merged into allCards)
+      fateEntries.length = 0;
+      const seenF = new Set();
+      const foundFates = (allCards || []).filter(c => Array.isArray(c.tags) && c.tags.includes('Fate'))
+        .filter(c => {
+          const key = normalizeText(c.name);
+          if (seenF.has(key)) return false; seenF.add(key); return true;
+        });
+      for (const c of foundFates) fateEntries.push({ name: c.name, tier: 'Unranked', card: c });
+      // reset visible/hidden tiers for this section
+      const activeMainKeyF = 'fate';
+      const visEmptyF = getVisibleEmptyTiers(activeMainKeyF);
+      const hidF = getHiddenTiers(activeMainKeyF);
+      visEmptyF.clear(); hidF.clear();
+      for (const t of ["S","A","B","C","D"]) visEmptyF.add(t);
+      for (const t of ["SSS","SS","F"]) hidF.add(t);
+      rebuildCurrentView();
+      return;
+    } else if (camp === 'guildvox') {
+      targetType = 'campaign-guildvox';
+      // Derive from blightedReachRaw and attach the Blighted Reach card objects (do NOT fall back to base/allCards)
+      guildVoxEntries.length = 0;
+      const seen = new Set();
+      const found = (blightedReachRaw || []).filter(c => Array.isArray(c.tags) && (c.tags.includes('Guild') || c.tags.includes('Vox')))
+        .filter(c => {
+          const key = normalizeText(c.name);
+          if (seen.has(key)) return false; seen.add(key); return true;
+        });
+      for (const c of found) {
+        // Attach the raw Blighted Reach card object so images/ids come from blightedreach.yml only
+        guildVoxEntries.push({ name: c.name, tier: 'Unranked', card: c });
+      }
+      // reset visible/hidden tiers for this section
+      const activeMainKey = 'campaign-guildvox';
+      const visEmpty = getVisibleEmptyTiers(activeMainKey);
+      const hid = getHiddenTiers(activeMainKey);
+      visEmpty.clear(); hid.clear();
+      for (const t of ["S","A","B","C","D"]) visEmpty.add(t);
+      for (const t of ["SSS","SS","F"]) hid.add(t);
+      rebuildCurrentView();
+      return;
+    }
   }
   
   // Load cards from YAML in original order
@@ -1458,20 +1831,25 @@ function clearTierList() {
       });
     }
     
-    // Make sure only S-D tiers are visible as empty rows, hide others
-    visibleEmptyTiers.clear();
-    hiddenTiers.clear();
-    
+    // Make sure only S-D tiers are visible as empty rows, hide others (for this active tab)
+    let activeMainKey = activeTab.dataset.tab;
+    if (activeMainKey === 'leaders') {
+      const sub = activeSubTab && activeSubTab.dataset && activeSubTab.dataset.subtab ? activeSubTab.dataset.subtab : currentLeaderTab;
+      activeMainKey = `leaders-${sub}`;
+    }
+    const visEmpty = getVisibleEmptyTiers(activeMainKey);
+    const hid = getHiddenTiers(activeMainKey);
+    visEmpty.clear();
+    hid.clear();
     // Show S, A, B, C, D as empty rows
     const visibleTiers = ["S", "A", "B", "C", "D"];
     for (const tier of visibleTiers) {
-      visibleEmptyTiers.add(tier);
+      visEmpty.add(tier);
     }
-    
     // Hide SSS, SS, F
     const hiddenTierList = ["SSS", "SS", "F"];
     for (const tier of hiddenTierList) {
-      hiddenTiers.add(tier);
+      hid.add(tier);
     }
     
     rebuildCurrentView();
@@ -1479,7 +1857,7 @@ function clearTierList() {
 }
 
 // ========== Export ==========
-function entriesToCsv(leaders3P, leaders4P, lore, basecourt) {
+function entriesToCsv(leaders3P, leaders4P, lore, fate, basecourt, guildVox, campaignLores) {
   const TIER_ORDER = ["SSS", "SS", "S", "A", "B", "C", "D", "F", "Unranked"];
   
   // Group 3P leaders by tier
@@ -1510,6 +1888,26 @@ function entriesToCsv(leaders3P, leaders4P, lore, basecourt) {
   for (const entry of lore) {
     const t = TIER_ORDER.includes(entry.tier) ? entry.tier : "D";
     loreGroups.get(t).push(entry);
+  }
+
+  // Group fate by tier
+  const fateGroups = new Map();
+  for (const tier of TIER_ORDER) {
+    fateGroups.set(tier, []);
+  }
+  for (const entry of fate) {
+    const t = TIER_ORDER.includes(entry.tier) ? entry.tier : "D";
+    fateGroups.get(t).push(entry);
+  }
+  
+  // Group guild/vox by tier
+  const guildVoxGroups = new Map();
+  for (const tier of TIER_ORDER) {
+    guildVoxGroups.set(tier, []);
+  }
+  for (const entry of (guildVox || [])) {
+    const t = TIER_ORDER.includes(entry.tier) ? entry.tier : "D";
+    guildVoxGroups.get(t).push(entry);
   }
   
   // Group base court by tier
@@ -1543,7 +1941,7 @@ function entriesToCsv(leaders3P, leaders4P, lore, basecourt) {
   }
   
   csv += "\n";
-  
+
   // Export lore by tier order
   for (const tier of TIER_ORDER) {
     const entries = loreGroups.get(tier);
@@ -1551,12 +1949,48 @@ function entriesToCsv(leaders3P, leaders4P, lore, basecourt) {
       csv += `${entry.name},${entry.tier}\n`;
     }
   }
-  
+
   csv += "\n";
-  
+
   // Export base court by tier order
   for (const tier of TIER_ORDER) {
     const entries = basecourtGroups.get(tier);
+    for (const entry of entries) {
+      csv += `${entry.name},${entry.tier}\n`;
+    }
+  }
+
+  csv += "\n";
+
+  // Export fate by tier order (placed last)
+  for (const tier of TIER_ORDER) {
+    const entries = fateGroups.get(tier);
+    for (const entry of entries) {
+      csv += `${entry.name},${entry.tier}\n`;
+    }
+  }
+  
+  csv += "\n";
+
+  // Export campaign lores by tier order (between fate and guildvox)
+  const campaignLoresGroups = new Map();
+  for (const tier of TIER_ORDER) campaignLoresGroups.set(tier, []);
+  for (const entry of (campaignLores || [])) {
+    const t = TIER_ORDER.includes(entry.tier) ? entry.tier : "D";
+    campaignLoresGroups.get(t).push(entry);
+  }
+  for (const tier of TIER_ORDER) {
+    const entries = campaignLoresGroups.get(tier) || [];
+    for (const entry of entries) {
+      csv += `${entry.name},${entry.tier}\n`;
+    }
+  }
+
+  csv += "\n";
+
+  // Export guild & vox by tier order (placed after lores)
+  for (const tier of TIER_ORDER) {
+    const entries = guildVoxGroups.get(tier);
     for (const entry of entries) {
       csv += `${entry.name},${entry.tier}\n`;
     }
@@ -1601,7 +2035,7 @@ function fallbackCopyTextToClipboard(text) {
 }
 
 function openExportModal() {
-  el.exportText.value = entriesToCsv(leaderEntries3P, leaderEntries4P, loreEntries, basecourtEntries);
+  el.exportText.value = entriesToCsv(leaderEntries3P, leaderEntries4P, loreEntries, getFilteredFateEntries(), basecourtEntries, getFilteredGuildVoxEntries(), getFilteredCampaignLoresEntries());
   el.exportModal.classList.remove("hidden");
   document.body.style.overflow = "hidden";
 }
@@ -1651,7 +2085,7 @@ async function doImport() {
     for (const c of allCards) cardMap.set(normalizeText(c.name), c);
     const result = parseTierListSheet(rows, allCards);
 
-    if (result.leaders3P.length === 0 && result.leaders4P.length === 0 && result.lore.length === 0 && result.basecourt.length === 0) {
+    if (result.leaders3P.length === 0 && result.leaders4P.length === 0 && result.lore.length === 0 && result.fate.length === 0 && result.basecourt.length === 0) {
       alert("No valid tier data found in the input.");
       return;
     }
@@ -1659,7 +2093,42 @@ async function doImport() {
     leaderEntries3P = result.leaders3P;
     leaderEntries4P = result.leaders4P;
     loreEntries = result.lore;
+    fateEntries = result.fate || [];
     basecourtEntries = result.basecourt;
+    // Import any additional sections (campaignGuildVox)
+    if (result.others && result.others['campaignGuildVox'] && result.others['campaignGuildVox'].length > 0) {
+      // Map imported guild/vox entries to blightedReachRaw card objects when possible
+      const imported = result.others['campaignGuildVox'];
+      guildVoxEntries = (imported || []).map(ent => {
+        let matched = null;
+        if (Array.isArray(blightedReachRaw) && blightedReachRaw.length > 0) {
+          if (ent.card && ent.card.id) matched = blightedReachRaw.find(c => c.id && String(c.id) === String(ent.card.id));
+          if (!matched) matched = blightedReachRaw.find(c => normalizeText(c.name) === normalizeText(ent.name));
+        }
+        return { name: ent.name, tier: ent.tier || 'Unranked', card: matched || null };
+      });
+    } else if (Array.isArray(blightedReachRaw) && blightedReachRaw.length > 0) {
+      // Derive from Blighted Reach raw cards only
+      const seen = new Set();
+      guildVoxEntries = blightedReachRaw.filter(c => Array.isArray(c.tags) && (c.tags.includes('Guild') || c.tags.includes('Vox')))
+        .filter(c => {
+          const key = normalizeText(c.name);
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        })
+        .map(c => ({ name: c.name, tier: 'Unranked', card: c }));
+    } else {
+      // No expansion data available -> empty
+      guildVoxEntries = [];
+    }
+
+    // Debug: log campaign lists sizes
+    console.debug('Loaded campaign lists:', {
+      campaignLores: campaignLoresEntries.length,
+      guildVox: guildVoxEntries.length,
+      fate: fateEntries.length
+    });
     rebuildCurrentView();
     // Show share button for imported tier lists
     el.shareBtn.style.display = "";
@@ -1692,7 +2161,10 @@ function initTabs() {
     leaders3p: el.leaders3pSection,
     leaders4p: el.leaders4pSection,
     lore: el.loreSection,
+    fate: el.fateSection,
     basecourt: el.basecourtSection,
+    'campaign-guildvox': el.campaignGuildVoxSection,
+    'campaign-lores': el.campaignLoresSection,
   };
 
   // Function to update URL hash based on current tab
@@ -1701,47 +2173,111 @@ function initTabs() {
     if (!activeTab) return;
     
     const tabName = activeTab.dataset.tab;
-    if (tabName === 'leaders') {
-      const activeSubTab = Array.from(el.subTabs).find(subTab => subTab.classList.contains('active'));
-      const subTabName = activeSubTab ? activeSubTab.dataset.subtab : '3p';
-      window.location.hash = `#${tabName}-${subTabName}`;
+    if (tabName === 'base') {
+      const activeBase = Array.from(el.baseSubTabsButtons).find(b => b.classList.contains('active'));
+      const baseName = activeBase ? activeBase.dataset.subtab : 'leaders';
+      if (baseName === 'leaders') {
+        const activeLeader = Array.from(el.subTabs).find(subTab => subTab.classList.contains('active'));
+        const leaderName = activeLeader ? activeLeader.dataset.subtab : '3p';
+        window.location.hash = `#base-leaders-${leaderName}`;
+      } else {
+        window.location.hash = `#base-${baseName}`;
+      }
     } else {
-      window.location.hash = `#${tabName}`;
+      if (tabName === 'campaign') {
+        const activeCamp = Array.from(el.campaignSubTabsButtons).find(b => b.classList.contains('active'));
+        const campName = activeCamp ? activeCamp.dataset.subtab : 'fate';
+        window.location.hash = `#campaign-${campName}`;
+      } else {
+        window.location.hash = `#${tabName}`;
+      }
     }
   }
 
-  // Function to set tab from hash
-  function setTabFromHash() {
+    // Function to set tab from hash
+    function setTabFromHash() {
     const hash = window.location.hash.substring(1); // remove #
     if (!hash) return;
-    
-    const [tabName, subTab] = hash.split('-');
-    
+
+    const parts = hash.split('-');
+    const tabName = parts[0];
+
     // Find and activate main tab
     const targetTab = Array.from(el.tabs).find(tab => tab.dataset.tab === tabName);
     if (targetTab && !targetTab.classList.contains('disabled')) {
       el.tabs.forEach((t) => t.classList.remove("active"));
       targetTab.classList.add("active");
-      
-      if (tabName === 'leaders') {
-        el.leaderSubTabs.style.display = '';
-        // Set sub-tab
-        const targetSub = subTab || '3p';
-        const targetSubTab = Array.from(el.subTabs).find(subTab => subTab.dataset.subtab === targetSub);
-        if (targetSubTab && !targetSubTab.classList.contains('disabled')) {
-          el.subTabs.forEach((t) => t.classList.remove("active"));
-          targetSubTab.classList.add("active");
-          currentLeaderTab = targetSub;
+
+      if (tabName === 'base') {
+        // Show base sub-tabs and pick a subtab
+        el.baseSubTabs.style.display = '';
+        let baseSub = parts[1] || 'leaders';
+        // Validate base subtab value
+        if (!['leaders', 'lore', 'basecourt'].includes(baseSub)) baseSub = 'leaders';
+        el.baseSubTabsButtons.forEach((b) => b.classList.toggle('active', b.dataset.subtab === baseSub));
+
+        if (baseSub === 'leaders') {
+          el.leaderSubTabs.style.display = '';
+          let leaderSub = parts[2] || '3p';
+          // Map accidental 'leaders' token to default leader subtab
+          if (leaderSub === 'leaders') leaderSub = '3p';
+          // Validate leader subtab value
+          if (!['3p', '4p'].includes(leaderSub)) leaderSub = '3p';
+          el.subTabs.forEach((t) => t.classList.toggle('active', t.dataset.subtab === leaderSub));
+          currentLeaderTab = leaderSub;
+          const sectionKey = currentLeaderTab === '3p' ? 'leaders3p' : 'leaders4p';
+          Object.entries(sections).forEach(([key, section]) => {
+            section.classList.toggle("hidden", key !== sectionKey);
+          });
+        } else {
+          el.leaderSubTabs.style.display = 'none';
+          Object.entries(sections).forEach(([key, section]) => {
+            section.classList.toggle("hidden", key !== baseSub);
+          });
         }
-        const sectionKey = currentLeaderTab === '3p' ? 'leaders3p' : 'leaders4p';
-        Object.entries(sections).forEach(([key, section]) => {
-          section.classList.toggle("hidden", key !== sectionKey);
-        });
-      } else {
+        // Ensure campaign sub-tabs are hidden when showing Base
+        if (el.campaignSubTabs) el.campaignSubTabs.style.display = 'none';
+        if (el.fateFilters) el.fateFilters.style.display = 'none';
+        if (el.campaignLoresFilters) el.campaignLoresFilters.style.display = 'none';
+      } else if (tabName === 'campaign') {
+        el.baseSubTabs.style.display = 'none';
         el.leaderSubTabs.style.display = 'none';
-        Object.entries(sections).forEach(([key, section]) => {
-          section.classList.toggle("hidden", key !== tabName);
-        });
+        el.campaignSubTabs.style.display = '';
+        const campSub = parts[1] || 'fate';
+        el.campaignSubTabsButtons.forEach((b) => b.classList.toggle('active', b.dataset.subtab === campSub));
+          if (campSub === 'fate') {
+            Object.entries(sections).forEach(([key, section]) => {
+              section.classList.toggle("hidden", key !== 'fate');
+            });
+            if (el.fateFilters) el.fateFilters.style.display = '';
+            if (el.fateFilterA) el.fateFilterA.checked = true;
+            if (el.fateFilterB) el.fateFilterB.checked = true;
+            if (el.fateFilterC) el.fateFilterC.checked = true;
+            rebuildCurrentView();
+          } else if (campSub === 'lores') {
+            Object.entries(sections).forEach(([key, section]) => {
+              section.classList.toggle("hidden", key !== 'campaign-lores');
+            });
+            if (el.campaignLoresFilters) el.campaignLoresFilters.style.display = '';
+            if (el.loreFilterDeck) el.loreFilterDeck.checked = true;
+            if (el.loreFilterFates) el.loreFilterFates.checked = true;
+            rebuildCurrentView();
+          } else if (campSub === 'guildvox') {
+            Object.entries(sections).forEach(([key, section]) => {
+              section.classList.toggle("hidden", key !== 'campaign-guildvox');
+            });
+            // Show Guild & Vox filters and initialize them when starting on this subtab
+            if (el.fateFilters) el.fateFilters.style.display = 'none';
+            if (el.campaignLoresFilters) el.campaignLoresFilters.style.display = 'none';
+            if (el.campaignGuildVoxFilters) el.campaignGuildVoxFilters.style.display = '';
+            if (el.guildFilterVox) el.guildFilterVox.checked = true;
+            if (el.guildFilterMaterial) el.guildFilterMaterial.checked = true;
+            if (el.guildFilterFuel) el.guildFilterFuel.checked = true;
+            if (el.guildFilterWeapon) el.guildFilterWeapon.checked = true;
+            if (el.guildFilterRelic) el.guildFilterRelic.checked = true;
+            if (el.guildFilterPsionic) el.guildFilterPsionic.checked = true;
+            rebuildCurrentView();
+          }
       }
     }
   }
@@ -1756,18 +2292,52 @@ function initTabs() {
       tab.classList.add("active");
       
       // Show/hide sub-tabs
-      if (target === 'leaders') {
-        el.leaderSubTabs.style.display = '';
-        // Show the current leader sub-tab
-        const currentSub = currentLeaderTab === '3p' ? 'leaders3p' : 'leaders4p';
-        Object.entries(sections).forEach(([key, section]) => {
-          section.classList.toggle("hidden", key !== currentSub);
-        });
-      } else {
+      if (target === 'base') {
+        el.baseSubTabs.style.display = '';
+        // Default to leaders subtab if not previously selected
+        const activeBase = Array.from(el.baseSubTabsButtons).find(b => b.classList.contains('active')) || el.baseSubTabsButtons[0];
+        const sub = activeBase ? activeBase.dataset.subtab : 'leaders';
+
+        if (sub === 'leaders') {
+          el.leaderSubTabs.style.display = '';
+          const sectionKey = currentLeaderTab === '3p' ? 'leaders3p' : 'leaders4p';
+          Object.entries(sections).forEach(([key, section]) => {
+            section.classList.toggle("hidden", key !== sectionKey);
+          });
+        } else {
+          el.leaderSubTabs.style.display = 'none';
+          Object.entries(sections).forEach(([key, section]) => {
+            section.classList.toggle("hidden", key !== sub);
+          });
+        }
+        // Ensure campaign sub-tabs are hidden when Base is clicked
+        if (el.campaignSubTabs) el.campaignSubTabs.style.display = 'none';
+        if (el.fateFilters) el.fateFilters.style.display = 'none';
+      } else if (target === 'campaign') {
+        el.baseSubTabs.style.display = 'none';
         el.leaderSubTabs.style.display = 'none';
-        Object.entries(sections).forEach(([key, section]) => {
-          section.classList.toggle("hidden", key !== target);
-        });
+        el.campaignSubTabs.style.display = '';
+        const activeCamp = Array.from(el.campaignSubTabsButtons).find(b => b.classList.contains('active')) || el.campaignSubTabsButtons[0];
+        const campSub = activeCamp ? activeCamp.dataset.subtab : 'fate';
+
+        if (campSub === 'fate') {
+          Object.entries(sections).forEach(([key, section]) => {
+            section.classList.toggle("hidden", key !== 'fate');
+          });
+          if (el.fateFilters) el.fateFilters.style.display = '';
+          if (el.fateFilterA) el.fateFilterA.checked = true;
+          if (el.fateFilterB) el.fateFilterB.checked = true;
+          if (el.fateFilterC) el.fateFilterC.checked = true;
+          rebuildCurrentView();
+        } else if (campSub === 'lores') {
+          Object.entries(sections).forEach(([key, section]) => {
+            section.classList.toggle("hidden", key !== 'campaign-lores');
+          });
+        } else if (campSub === 'guildvox') {
+          Object.entries(sections).forEach(([key, section]) => {
+            section.classList.toggle("hidden", key !== 'campaign-guildvox');
+          });
+        }
       }
       
       updateHash();
@@ -1789,14 +2359,79 @@ function initTabs() {
       Object.entries(sections).forEach(([key, section]) => {
         section.classList.toggle("hidden", key !== sectionKey);
       });
-      
+      if (el.fateFilters) el.fateFilters.style.display = 'none';
+      updateHash();
+    });
+  });
+
+  // Base sub-tabs switching
+  el.baseSubTabsButtons.forEach((b) => {
+    b.addEventListener('click', () => {
+      el.baseSubTabsButtons.forEach((bb) => bb.classList.remove('active'));
+      b.classList.add('active');
+      const sub = b.dataset.subtab;
+      if (sub === 'leaders') {
+        el.leaderSubTabs.style.display = '';
+        const sectionKey = currentLeaderTab === '3p' ? 'leaders3p' : 'leaders4p';
+        Object.entries(sections).forEach(([key, section]) => {
+          section.classList.toggle("hidden", key !== sectionKey);
+        });
+      } else {
+        el.leaderSubTabs.style.display = 'none';
+        Object.entries(sections).forEach(([key, section]) => {
+          section.classList.toggle("hidden", key !== sub);
+        });
+      }
+      updateHash();
+      if (el.fateFilters) el.fateFilters.style.display = 'none';
+    });
+  });
+
+  // Campaign sub-tabs switching
+  el.campaignSubTabsButtons.forEach((b) => {
+    b.addEventListener('click', () => {
+      el.campaignSubTabsButtons.forEach((bb) => bb.classList.remove('active'));
+      b.classList.add('active');
+      const sub = b.dataset.subtab;
+      if (sub === 'fate') {
+        Object.entries(sections).forEach(([key, section]) => {
+          section.classList.toggle("hidden", key !== 'fate');
+        });
+        if (el.fateFilters) el.fateFilters.style.display = '';
+        if (el.campaignLoresFilters) el.campaignLoresFilters.style.display = 'none';
+        if (el.fateFilterA) el.fateFilterA.checked = true;
+        if (el.fateFilterB) el.fateFilterB.checked = true;
+        if (el.fateFilterC) el.fateFilterC.checked = true;
+        rebuildCurrentView();
+      } else if (sub === 'lores') {
+        Object.entries(sections).forEach(([key, section]) => {
+          section.classList.toggle("hidden", key !== 'campaign-lores');
+            if (el.fateFilters) el.fateFilters.style.display = 'none';
+            if (el.campaignLoresFilters) el.campaignLoresFilters.style.display = '';
+            if (el.loreFilterDeck) el.loreFilterDeck.checked = true;
+            if (el.loreFilterFates) el.loreFilterFates.checked = true;
+            rebuildCurrentView();
+        });
+      } else if (sub === 'guildvox') {
+        Object.entries(sections).forEach(([key, section]) => {
+          section.classList.toggle("hidden", key !== 'campaign-guildvox');
+        });
+        if (el.fateFilters) el.fateFilters.style.display = 'none';
+        if (el.campaignLoresFilters) el.campaignLoresFilters.style.display = 'none';
+        if (el.campaignGuildVoxFilters) el.campaignGuildVoxFilters.style.display = '';
+        if (el.guildFilterVox) el.guildFilterVox.checked = true;
+        rebuildCurrentView();
+      }
       updateHash();
     });
   });
 
   // Initialize sub-tabs visibility
-  if (el.tabs[0].classList.contains('active') && el.tabs[0].dataset.tab === 'leaders') {
-    el.leaderSubTabs.style.display = '';
+  if (el.tabs[0].classList.contains('active') && el.tabs[0].dataset.tab === 'base') {
+    el.baseSubTabs.style.display = '';
+    if (el.campaignSubTabs) el.campaignSubTabs.style.display = 'none';
+    if (el.fateFilters) el.fateFilters.style.display = 'none';
+    if (el.campaignLoresFilters) el.campaignLoresFilters.style.display = 'none';
   }
   
   // Set initial tab from hash
@@ -1818,9 +2453,8 @@ function disableEmptyTabs() {
   
   // Disable main tabs for empty sections
   const tabMappings = {
-    'leaders': leaderEntries3P.length > 0 || leaderEntries4P.length > 0,
-    'lore': loreEntries.length > 0,
-    'basecourt': basecourtEntries.length > 0
+    'base': (leaderEntries3P.length > 0 || leaderEntries4P.length > 0) || loreEntries.length > 0 || basecourtEntries.length > 0,
+    'campaign': fateEntries.length > 0 || campaignLoresEntries.length > 0 || guildVoxEntries.length > 0
   };
   
   el.tabs.forEach((tab) => {
@@ -1836,10 +2470,29 @@ function disableEmptyTabs() {
   el.subTabs.forEach((subTab) => {
     const subTabType = subTab.dataset.subtab;
     const hasData = subTabType === '3p' ? leaderEntries3P.length > 0 : leaderEntries4P.length > 0;
-    
+
     if (!hasData) {
       subTab.classList.add('disabled');
     }
+  });
+
+  // Disable base sub-tabs for shared lists if empty
+  el.baseSubTabsButtons.forEach((b) => {
+    const id = b.dataset.subtab;
+    let hasData = false;
+    if (id === 'leaders') hasData = leaderEntries3P.length > 0 || leaderEntries4P.length > 0;
+    if (id === 'lore') hasData = loreEntries.length > 0;
+    if (id === 'basecourt') hasData = basecourtEntries.length > 0;
+    if (!hasData) b.classList.add('disabled');
+  });
+  // Disable campaign sub-tabs for shared lists if empty
+  el.campaignSubTabsButtons.forEach((b) => {
+    const id = b.dataset.subtab;
+    let hasData = false;
+    if (id === 'fate') hasData = getFilteredFateEntries().length > 0;
+    if (id === 'lores') hasData = getFilteredCampaignLoresEntries().length > 0;
+    if (id === 'guildvox') hasData = getFilteredGuildVoxEntries().length > 0;
+    if (!hasData) b.classList.add('disabled');
   });
   
   // If current active tab is disabled, switch to first available tab
@@ -1864,12 +2517,15 @@ function disableEmptyTabs() {
 // ========== Download PNG ==========
 function initDownload() {
   el.downloadBtn.addEventListener("click", async () => {
-    // Determine which section is visible
+    // Determine which section is visible (include campaign sections)
     const isLeaders3P = !el.leaders3pSection.classList.contains("hidden");
     const isLeaders4P = !el.leaders4pSection.classList.contains("hidden");
     const isLore = !el.loreSection.classList.contains("hidden");
     const isBaseCourt = !el.basecourtSection.classList.contains("hidden");
-    
+    const isFate = !el.fateSection.classList.contains("hidden");
+    const isCampaignLores = !el.campaignLoresSection.classList.contains("hidden");
+    const isGuildVox = !el.campaignGuildVoxSection.classList.contains("hidden");
+
     let target, label;
     if (isLeaders3P) {
       target = el.leaders3pTierList;
@@ -1880,6 +2536,15 @@ function initDownload() {
     } else if (isLore) {
       target = el.loreTierList;
       label = "lore";
+    } else if (isFate) {
+      target = el.fateTierList;
+      label = "fates";
+    } else if (isCampaignLores) {
+      target = el.campaignLoresTierList;
+      label = "campaign-lores";
+    } else if (isGuildVox) {
+      target = el.campaignGuildVoxTierList;
+      label = "guild-vox";
     } else if (isBaseCourt) {
       target = el.basecourtTierList;
       label = "basecourt";
@@ -1951,10 +2616,10 @@ const TIER_MAP = { 'SSS': '0', 'SS': '1', 'S': '2', 'A': '3', 'B': '4', 'C': '5'
 const REVERSE_TIER_MAP = { '0': 'SSS', '1': 'SS', '2': 'S', '3': 'A', '4': 'B', '5': 'C', '6': 'D', '7': 'F', '8': 'Unranked' };
 
 function encodeTierListForURL(selectedSections) {
-  // Build card index map for compression
+  // Build card index map for compression (use normalized names)
   const cardIndex = new Map();
   allCards.forEach((card, index) => {
-    cardIndex.set(card.name, index);
+    cardIndex.set(normalizeText(card.name), index);
   });
   
   // Create format: name|Section:idx(2)digit(1)idx(2)digit(1)...|name|Section:...
@@ -1962,17 +2627,19 @@ function encodeTierListForURL(selectedSections) {
   for (const section of selectedSections) {
     let entries = '';
     for (const entry of section.data) {
-      const index = cardIndex.get(entry.name);
+      const idxKey = normalizeText(entry.name);
+      const index = cardIndex.get(idxKey);
       const tierDigit = TIER_MAP[entry.tier];
-      if (index !== undefined && tierDigit) {
-        entries += index.toString().padStart(2, '0') + tierDigit;
+      // Use 3-digit index to support large card sets; ensure tierDigit exists (allow '0')
+      if (index !== undefined && tierDigit !== undefined && tierDigit !== null) {
+        entries += index.toString().padStart(3, '0') + tierDigit;
       }
     }
     
     if (entries) {
-      // Encode section name and data
-      const sectionCode = getSectionCode(section.id);
-      parts.push(`${btoa(section.name)}|${sectionCode}:${entries}`);
+      // Encode section display name and section id (for future-proofing)
+      const sectionIdEncoded = btoa(section.id);
+      parts.push(`${btoa(section.name)}|${sectionIdEncoded}:${entries}`);
     }
   }
   
@@ -1984,6 +2651,7 @@ function getSectionCode(sectionId) {
     case 'leaders3p': return '3';
     case 'leaders4p': return '4';
     case 'lore': return 'L';
+    case 'fate': return 'T';
     case 'basecourt': return 'B';
     default: return 'U'; // Unknown
   }
@@ -1996,10 +2664,7 @@ function decodeTierListFromURL(encoded) {
     const data = atob(padded);
     const parts = data.split('|');
     
-    const leaders3P = [];
-    const leaders4P = [];
-    const lore = [];
-    const basecourt = [];
+    const parsedSections = {};
     
     // Detect format: if first part is a section code (3,4,L,B), it's old format
     // If first part is base64 encoded name, it's new format
@@ -2010,20 +2675,23 @@ function decodeTierListFromURL(encoded) {
       for (const section of parts) {
         const [sectionName, entriesStr] = section.split(':');
         if (!entriesStr) continue;
-        
-        let targetArray;
+
+        let sectionId;
         switch (sectionName) {
-          case '3': targetArray = leaders3P; break;
-          case '4': targetArray = leaders4P; break;
-          case 'L': targetArray = lore; break;
-          case 'B': targetArray = basecourt; break;
-          default: continue;
+          case '3': sectionId = 'leaders3p'; break;
+          case '4': sectionId = 'leaders4p'; break;
+          case 'L': sectionId = 'lore'; break;
+          case 'T': sectionId = 'fate'; break;
+          case 'B': sectionId = 'basecourt'; break;
+          default: sectionId = 'unknown'; break;
         }
-        
-        // Parse fixed-width entries: 2 digits index + 1 digit tier
-        for (let i = 0; i < entriesStr.length; i += 3) {
-          const indexStr = entriesStr.substr(i, 2);
-          const tierDigit = entriesStr.substr(i + 2, 1);
+
+        const targetArray = parsedSections[sectionId] = parsedSections[sectionId] || [];
+
+        // Parse fixed-width entries: 3 digits index + 1 digit tier
+        for (let i = 0; i < entriesStr.length; i += 4) {
+          const indexStr = entriesStr.substr(i, 3);
+          const tierDigit = entriesStr.substr(i + 3, 1);
           const index = parseInt(indexStr, 10);
           const tier = REVERSE_TIER_MAP[tierDigit];
           if (!isNaN(index) && index >= 0 && index < allCards.length && tier) {
@@ -2033,29 +2701,30 @@ function decodeTierListFromURL(encoded) {
         }
       }
     } else {
-      // New format: name|Section:entries|name|Section:entries...
+      // New format: name|SectionIdEncoded:entries|name|SectionIdEncoded:entries...
       for (let i = 0; i < parts.length; i += 2) {
         if (i + 1 >= parts.length) break;
-        
+
         const nameEncoded = parts[i];
         const sectionData = parts[i + 1];
-        
+
         const customName = atob(nameEncoded);
-        const [sectionName, entriesStr] = sectionData.split(':');
-        
-        let targetArray;
-        switch (sectionName) {
-          case '3': targetArray = leaders3P; break;
-          case '4': targetArray = leaders4P; break;
-          case 'L': targetArray = lore; break;
-          case 'B': targetArray = basecourt; break;
-          default: continue;
+        const [sectionIdEncoded, entriesStr] = sectionData.split(':');
+        if (!entriesStr) continue;
+
+        let sectionId;
+        try {
+          sectionId = atob(sectionIdEncoded);
+        } catch (err) {
+          continue;
         }
-        
-        // Parse fixed-width entries: 2 digits index + 1 digit tier
-        for (let j = 0; j < entriesStr.length; j += 3) {
-          const indexStr = entriesStr.substr(j, 2);
-          const tierDigit = entriesStr.substr(j + 2, 1);
+
+        const targetArray = parsedSections[sectionId] = parsedSections[sectionId] || [];
+
+        // Parse fixed-width entries: 3 digits index + 1 digit tier
+        for (let j = 0; j < entriesStr.length; j += 4) {
+          const indexStr = entriesStr.substr(j, 3);
+          const tierDigit = entriesStr.substr(j + 3, 1);
           const index = parseInt(indexStr, 10);
           const tier = REVERSE_TIER_MAP[tierDigit];
           if (!isNaN(index) && index >= 0 && index < allCards.length && tier) {
@@ -2065,8 +2734,25 @@ function decodeTierListFromURL(encoded) {
         }
       }
     }
+
+    // Map parsedSections into well-known return shape while preserving unknown sections
+    const leaders3P = parsedSections['leaders3p'] || [];
+    const leaders4P = parsedSections['leaders4p'] || [];
+    const lore = parsedSections['lore'] || [];
+    const fate = parsedSections['fate'] || [];
+    const basecourt = parsedSections['basecourt'] || [];
+
+    // Also include any other sections so callers can access them if needed
+    const others = {};
+    for (const k of Object.keys(parsedSections)) {
+      if (!['leaders3p','leaders4p','lore','fate','basecourt'].includes(k)) {
+        others[k] = parsedSections[k];
+      }
+    }
+
+    return { leaders3P, leaders4P, lore, fate, basecourt, others };
     
-    return { leaders3P, leaders4P, lore, basecourt };
+    return { leaders3P, leaders4P, lore, fate, basecourt };
   } catch (err) {
     console.error('Failed to decode tier list from URL:', err);
     return null;
@@ -2091,14 +2777,15 @@ function updateMetaTagsForSharedTierList(encoded) {
       for (const section of parts) {
         const [sectionName, entriesStr] = section.split(':');
         if (entriesStr) {
-          const entryCount = entriesStr.length / 3; // Each entry is 3 characters
+          const entryCount = entriesStr.length / 4; // Each entry is 4 characters (3-digit index + 1-digit tier)
           totalCount += entryCount;
           
-          // Add default section names
+            // Add default section names
           switch (sectionName) {
             case '3': sectionNames.push('3P Leaders'); break;
             case '4': sectionNames.push('4P Leaders'); break;
             case 'L': sectionNames.push('Lore'); break;
+            case 'T': sectionNames.push('Fate'); break;
             case 'B': sectionNames.push('Base Court'); break;
           }
         }
@@ -2112,9 +2799,9 @@ function updateMetaTagsForSharedTierList(encoded) {
         const sectionData = parts[i + 1];
         
         const customName = atob(nameEncoded);
-        const [sectionName, entriesStr] = sectionData.split(':');
+          const [sectionName, entriesStr] = sectionData.split(':');
         
-        if (entriesStr) {
+          if (entriesStr) {
           const entryCount = entriesStr.length / 3; // Each entry is 3 characters
           totalCount += entryCount;
           sectionNames.push(customName);
@@ -2160,7 +2847,9 @@ async function shareTierList() {
   const isDefault = arraysEqual(leaderEntries3P, defaultTierData.leaders3P) &&
                     arraysEqual(leaderEntries4P, defaultTierData.leaders4P) &&
                     arraysEqual(loreEntries, defaultTierData.lore) &&
-                    arraysEqual(basecourtEntries, defaultTierData.basecourt);
+                    arraysEqual(basecourtEntries, defaultTierData.basecourt) &&
+                    arraysEqual(fateEntries, defaultTierData.fate) &&
+                    arraysEqual(guildVoxEntries, defaultTierData.others ? (defaultTierData.others['campaignGuildVox'] || []) : []);
 
   if (isDefault) {
     // Share the default tier list (base URL without parameters)
@@ -2184,7 +2873,10 @@ function populateShareModal() {
     { id: 'leaders3p', name: '3P Leaders', data: leaderEntries3P, defaultName: '3P Leaders' },
     { id: 'leaders4p', name: '4P Leaders', data: leaderEntries4P, defaultName: '4P Leaders' },
     { id: 'lore', name: 'Lore', data: loreEntries, defaultName: 'Lore' },
-    { id: 'basecourt', name: 'Base Court', data: basecourtEntries, defaultName: 'Base Court' }
+    { id: 'basecourt', name: 'Base Court', data: basecourtEntries, defaultName: 'Base Court' },
+    { id: 'fate', name: 'Fate', data: getFilteredFateEntries(), defaultName: 'Fate' },
+    { id: 'campaignLores', name: 'Lores', data: getFilteredCampaignLoresEntries(), defaultName: 'Lores' },
+    { id: 'campaignGuildVox', name: 'Guild & Vox', data: getFilteredGuildVoxEntries(), defaultName: 'Guild & Vox' }
   ];
   
   el.shareSections.innerHTML = '';
@@ -2236,7 +2928,10 @@ function confirmShare() {
       case 'leaders3p': data = leaderEntries3P; break;
       case 'leaders4p': data = leaderEntries4P; break;
       case 'lore': data = loreEntries; break;
+      case 'fate': data = getFilteredFateEntries(); break;
       case 'basecourt': data = basecourtEntries; break;
+      case 'campaignLores': data = getFilteredCampaignLoresEntries(); break;
+      case 'campaignGuildVox': data = getFilteredGuildVoxEntries(); break;
     }
     
     if (data && data.length > 0) {
@@ -2365,7 +3060,7 @@ async function init() {
       tierData = parseTierListSheet(rows, cards);
     }
 
-    if (tierData.leaders3P.length === 0 && tierData.leaders4P.length === 0 && tierData.lore.length === 0 && tierData.basecourt.length === 0) {
+    if (tierData.leaders3P.length === 0 && tierData.leaders4P.length === 0 && tierData.lore.length === 0 && tierData.fate.length === 0 && tierData.basecourt.length === 0) {
       setStatus("No tier list data found. Check the spreadsheet.", { isError: true });
       return;
     }
@@ -2374,14 +3069,90 @@ async function init() {
     leaderEntries4P = tierData.leaders4P;
     loreEntries = tierData.lore;
     basecourtEntries = tierData.basecourt;
+    // If the shared/default tier data included Fate section, use it; otherwise populate Fate from allCards
+    if (tierData.fate && tierData.fate.length > 0) {
+      fateEntries = tierData.fate;
+    } else {
+      fateEntries = allCards.filter(c => Array.isArray(c.tags) && c.tags.includes('Fate')).map(c => ({ name: c.name, tier: 'Unranked', card: c }));
+    }
 
-    buildTierListHTML(leaderEntries3P, el.leaders3pTierList, "leaders", "3P Leaders");
-    buildTierListHTML(leaderEntries4P, el.leaders4pTierList, "leaders", "4P Leaders");
+    // Populate campaign lores: prefer parsed data, otherwise source from base + campaign cards
+    if (tierData.others && tierData.others['campaignLores'] && tierData.others['campaignLores'].length > 0) {
+      campaignLoresEntries = tierData.others['campaignLores'];
+    } else {
+      // Use all loaded card sources (base + blighted reach) for lores, deduplicated by name
+      const seenL = new Set();
+      campaignLoresEntries = allCards.filter(c => Array.isArray(c.tags) && c.tags.includes('Lore'))
+        .filter(c => {
+          const key = normalizeText(c.name);
+          if (seenL.has(key)) return false;
+          seenL.add(key);
+          return true;
+        })
+        .map(c => ({ name: c.name, tier: 'Unranked', card: c }));
+    }
+
+    // Populate Guild & Vox campaign entries: only from blighted reach raw cards (expansion)
+    if (tierData.others && tierData.others['campaignGuildVox'] && tierData.others['campaignGuildVox'].length > 0) {
+      // Map any provided campaignGuildVox entries to Blighted Reach raw card objects
+      const provided = tierData.others['campaignGuildVox'];
+      guildVoxEntries = (provided || []).map(ent => {
+        let matched = null;
+        if (Array.isArray(blightedReachRaw) && blightedReachRaw.length > 0) {
+          if (ent.card && ent.card.id) matched = blightedReachRaw.find(c => c.id && String(c.id) === String(ent.card.id));
+          if (!matched) matched = blightedReachRaw.find(c => normalizeText(c.name) === normalizeText(ent.name));
+        }
+        return { name: ent.name, tier: ent.tier || 'Unranked', card: matched || null };
+      });
+    } else if (Array.isArray(blightedReachRaw) && blightedReachRaw.length > 0) {
+      const seen = new Set();
+      guildVoxEntries = blightedReachRaw.filter(c => Array.isArray(c.tags) && (c.tags.includes('Guild') || c.tags.includes('Vox')))
+        .filter(c => {
+          const key = normalizeText(c.name);
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        })
+        .map(c => ({ name: c.name, tier: 'Unranked', card: c }));
+    } else {
+      // No expansion data available -> empty
+      guildVoxEntries = [];
+    }
+
+    buildTierListHTML(leaderEntries3P, el.leaders3pTierList, "leaders-3p", "3P Leaders");
+    buildTierListHTML(leaderEntries4P, el.leaders4pTierList, "leaders-4p", "4P Leaders");
     buildTierListHTML(loreEntries, el.loreTierList, "lore", "Lore");
+    buildTierListHTML(getFilteredFateEntries(), el.fateTierList, "fate", "Fates");
     buildTierListHTML(basecourtEntries, el.basecourtTierList, "basecourt", "Base Court");
+    buildTierListHTML(getFilteredCampaignLoresEntries(), el.campaignLoresTierList, "campaign-lores", "Lores");
+    buildTierListHTML(getFilteredGuildVoxEntries(), el.campaignGuildVoxTierList, "campaign-guildvox", "Guild & Vox");
 
     // Disable tabs for empty sections in shared tier lists
     disableEmptyTabs();
+
+    // Wire fate filter events
+    if (el.fateFilterA) el.fateFilterA.addEventListener('change', () => { rebuildCurrentView(); disableEmptyTabs(); });
+    if (el.fateFilterB) el.fateFilterB.addEventListener('change', () => { rebuildCurrentView(); disableEmptyTabs(); });
+    if (el.fateFilterC) el.fateFilterC.addEventListener('change', () => { rebuildCurrentView(); disableEmptyTabs(); });
+      // Wire campaign lores filter events
+      if (el.loreFilterDeck) el.loreFilterDeck.addEventListener('change', () => { rebuildCurrentView(); disableEmptyTabs(); });
+      if (el.loreFilterFates) el.loreFilterFates.addEventListener('change', () => { rebuildCurrentView(); disableEmptyTabs(); });
+      // Wire guild & vox filter events
+      if (el.guildFilterVox) el.guildFilterVox.addEventListener('change', () => { rebuildCurrentView(); disableEmptyTabs(); });
+      if (el.guildFilterMaterial) el.guildFilterMaterial.addEventListener('change', () => { rebuildCurrentView(); disableEmptyTabs(); });
+      if (el.guildFilterFuel) el.guildFilterFuel.addEventListener('change', () => { rebuildCurrentView(); disableEmptyTabs(); });
+      if (el.guildFilterWeapon) el.guildFilterWeapon.addEventListener('change', () => { rebuildCurrentView(); disableEmptyTabs(); });
+      if (el.guildFilterRelic) el.guildFilterRelic.addEventListener('change', () => { rebuildCurrentView(); disableEmptyTabs(); });
+      if (el.guildFilterPsionic) el.guildFilterPsionic.addEventListener('change', () => { rebuildCurrentView(); disableEmptyTabs(); });
+    // Show/hide filter UI when campaign subtab toggles
+    if (el.campaignSubTabsButtons) {
+      el.campaignSubTabsButtons.forEach(b => b.addEventListener('click', () => {
+        const sub = b.dataset.subtab;
+        if (el.fateFilters) el.fateFilters.style.display = sub === 'fate' ? '' : 'none';
+        if (el.campaignLoresFilters) el.campaignLoresFilters.style.display = sub === 'lores' ? '' : 'none';
+        if (el.campaignGuildVoxFilters) el.campaignGuildVoxFilters.style.display = sub === 'guildvox' ? '' : 'none';
+      }));
+    }
 
     setStatus("");
   } catch (err) {
