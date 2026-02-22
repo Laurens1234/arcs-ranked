@@ -122,7 +122,7 @@
         <details class="draft-explainer alt">
           <summary class="draft-explainer-toggle">Draft Strategy</summary>
           <div class="draft-explainer-body">
-            <p>The most important thing to realize about drafting in arcs is that leaders are far more impactful than lores.</strong> In my experience A single tier difference in leaders is roughly equivalent to a 3-tier difference in lore. Only prioritize a lore card over a leader if the available leaders are all close in strength.</p>
+            <p>The most important thing to realize about drafting in arcs is that leaders are far more impactful than lores.</strong> In my experience a single tier difference in leaders is roughly equivalent to a 3-tier difference in lore. Only prioritize a lore card over a leader if the available leaders are all close in strength.</p>
             <p>The tool does not keep these in mind, but in your real game draft you should also consider:</p>
             <ul>
               <li>Draft for raw strength and flexibility first (this is what the tier lists and tool help with!), then for combos </li>
@@ -421,6 +421,6 @@
         <li><strong>Blocking simulation:</strong> the algorithm considers opponents blocking your combo and compares outcomes across scenarios to decide if pursuing the combo is worth it.</li>
       </ul>
       <p><strong>Safe</strong>: The default algorithm computes an "opportunity cost" for each pick: the value difference between taking the card now and the realistic replacement you are likely to get later. It accounts for immediate synergies with cards you already own and models how opponents might block your combos.</p>
-      <p><strong>Deep</strong>: The Deep algorithm evaluates candidates by simulating the remainder of the draft with opponents modeled using short lookahead evaluations. It explicitly considers opponent blocking and longer-term payoffs, so its recommendations focus more on downstream value and combos compared to Quick. Deep assumes other players draft to maximize their own final score (near-optimal play). By contrast, Quick prioritizes safe, immediate synergies and replacement value rather than deep opponent modeling.</p>
+      <p><strong>Deep</strong>: The Deep algorithm evaluates candidates by simulating the remainder of the draft with opponents modeled using short lookahead evaluations. It explicitly considers opponent blocking and longer-term payoffs, so its recommendations focus more on downstream value and combos compared to Quick. Deep assumes other players draft to maximize their own final score (near-optimal play). By contrast, Safe prioritizes safe, immediate synergies and replacement value rather than deep opponent modeling.</p>
     </div>
 </div>
