@@ -1763,22 +1763,32 @@ function clearTierList() {
   // Determine which section is currently visible
   const activeTab = Array.from(el.tabs).find(tab => tab.classList.contains('active'));
   const activeSubTab = Array.from(el.subTabs).find(subTab => subTab.classList.contains('active'));
-  
+
   let targetType, targetEntries;
-  if (activeTab.dataset.tab === 'leaders') {
-    targetType = 'leaders';
-    if (activeSubTab.dataset.subtab === '3p') {
-      targetEntries = leaderEntries3P;
-    } else {
-      targetEntries = leaderEntries4P;
+  // Handle Base tab with its own sub-tabs (leaders, lore, basecourt)
+  if (activeTab && activeTab.dataset.tab === 'base') {
+    const activeBase = Array.from(el.baseSubTabsButtons).find(b => b.classList.contains('active'));
+    const baseSub = activeBase ? activeBase.dataset.subtab : 'leaders';
+    if (baseSub === 'leaders') {
+      targetType = 'leaders';
+      // Determine which leader player-count subtab is active (3p/4p)
+      const activeLeader = Array.from(el.leaderSubTabs.querySelectorAll('.sub-tab')).find(sb => sb.classList.contains('active'));
+      const leaderSub = activeLeader ? activeLeader.dataset.subtab : (activeSubTab && activeSubTab.dataset ? activeSubTab.dataset.subtab : currentLeaderTab);
+      targetEntries = leaderSub === '4p' ? leaderEntries4P : leaderEntries3P;
+    } else if (baseSub === 'lore') {
+      targetType = 'lore';
+      targetEntries = loreEntries;
+    } else if (baseSub === 'basecourt') {
+      targetType = 'basecourt';
+      targetEntries = basecourtEntries;
     }
-  } else if (activeTab.dataset.tab === 'lore') {
+  } else if (activeTab && activeTab.dataset.tab === 'lore') {
     targetType = 'lore';
     targetEntries = loreEntries;
-  } else if (activeTab.dataset.tab === 'basecourt') {
+  } else if (activeTab && activeTab.dataset.tab === 'basecourt') {
     targetType = 'basecourt';
     targetEntries = basecourtEntries;
-  } else if (activeTab.dataset.tab === 'campaign') {
+  } else if (activeTab && activeTab.dataset.tab === 'campaign') {
     // Determine which campaign subtab is active
     const activeCamp = Array.from(el.campaignSubTabsButtons).find(b => b.classList.contains('active'));
     const camp = activeCamp ? activeCamp.dataset.subtab : 'fate';
@@ -1859,10 +1869,19 @@ function clearTierList() {
     }
     
     // Make sure only S-D tiers are visible as empty rows, hide others (for this active tab)
-    let activeMainKey = activeTab.dataset.tab;
-    if (activeMainKey === 'leaders') {
-      const sub = activeSubTab && activeSubTab.dataset && activeSubTab.dataset.subtab ? activeSubTab.dataset.subtab : currentLeaderTab;
-      activeMainKey = `leaders-${sub}`;
+    let activeMainKey;
+    if (activeTab && activeTab.dataset.tab === 'base') {
+      const activeBase = Array.from(el.baseSubTabsButtons).find(b => b.classList.contains('active'));
+      const baseSub = activeBase ? activeBase.dataset.subtab : 'leaders';
+      if (baseSub === 'leaders') {
+        const activeLeader = Array.from(el.leaderSubTabs.querySelectorAll('.sub-tab')).find(sb => sb.classList.contains('active'));
+        const leaderSub = activeLeader ? activeLeader.dataset.subtab : (activeSubTab && activeSubTab.dataset ? activeSubTab.dataset.subtab : currentLeaderTab);
+        activeMainKey = `leaders-${leaderSub}`;
+      } else {
+        activeMainKey = baseSub;
+      }
+    } else {
+      activeMainKey = activeTab ? activeTab.dataset.tab : 'leaders-3p';
     }
     const visEmpty = getVisibleEmptyTiers(activeMainKey);
     const hid = getHiddenTiers(activeMainKey);
@@ -2234,7 +2253,15 @@ function initTabs() {
       const activeBase = Array.from(el.baseSubTabsButtons).find(b => b.classList.contains('active'));
       const baseName = activeBase ? activeBase.dataset.subtab : 'leaders';
       if (baseName === 'leaders') {
-        const activeLeader = Array.from(el.subTabs).find(subTab => subTab.classList.contains('active'));
+        // Prefer the leader sub-tabs (3p/4p) when building the hash.
+        let activeLeader = null;
+        if (el.leaderSubTabs) {
+          activeLeader = Array.from(el.leaderSubTabs.querySelectorAll('.sub-tab')).find(subTab => subTab.classList.contains('active'));
+        }
+        if (!activeLeader) {
+          // Fallback to any .sub-tab active (backwards compatibility)
+          activeLeader = Array.from(el.subTabs).find(subTab => subTab.classList.contains('active'));
+        }
         const leaderName = activeLeader ? activeLeader.dataset.subtab : '3p';
         window.location.hash = `#base-leaders-${leaderName}`;
       } else {
@@ -2257,6 +2284,12 @@ function initTabs() {
     if (!hash) return;
 
     const parts = hash.split('-');
+    // Normalize malformed hash '#base-leaders-leaders' to '#base-leaders-3p'
+    if (parts[0] === 'base' && parts[1] === 'leaders' && parts[2] === 'leaders') {
+      window.location.hash = '#base-leaders-3p';
+      return;
+    }
+
     const tabName = parts[0];
 
     // Find and activate main tab
@@ -2292,10 +2325,11 @@ function initTabs() {
             section.classList.toggle("hidden", key !== baseSub);
           });
         }
-        // Ensure campaign sub-tabs are hidden when showing Base
+        // Ensure campaign sub-tabs and campaign filters are hidden when showing Base
         if (el.campaignSubTabs) el.campaignSubTabs.style.display = 'none';
         if (el.fateFilters) el.fateFilters.style.display = 'none';
         if (el.campaignLoresFilters) el.campaignLoresFilters.style.display = 'none';
+        if (el.campaignGuildVoxFilters) el.campaignGuildVoxFilters.style.display = 'none';
       } else if (tabName === 'campaign') {
         el.baseSubTabs.style.display = 'none';
         el.leaderSubTabs.style.display = 'none';
@@ -2367,9 +2401,11 @@ function initTabs() {
             section.classList.toggle("hidden", key !== sub);
           });
         }
-        // Ensure campaign sub-tabs are hidden when Base is clicked
+        // Ensure campaign sub-tabs and campaign filters are hidden when Base is clicked
         if (el.campaignSubTabs) el.campaignSubTabs.style.display = 'none';
         if (el.fateFilters) el.fateFilters.style.display = 'none';
+        if (el.campaignLoresFilters) el.campaignLoresFilters.style.display = 'none';
+        if (el.campaignGuildVoxFilters) el.campaignGuildVoxFilters.style.display = 'none';
       } else if (target === 'campaign') {
         el.baseSubTabs.style.display = 'none';
         el.leaderSubTabs.style.display = 'none';
@@ -2416,10 +2452,51 @@ function initTabs() {
       Object.entries(sections).forEach(([key, section]) => {
         section.classList.toggle("hidden", key !== sectionKey);
       });
+      // Ensure the base 'Leaders' sub-tab button is active when a leader sub-tab is selected
+      if (el.baseSubTabsButtons) {
+        el.baseSubTabsButtons.forEach((bb) => bb.classList.toggle('active', bb.dataset.subtab === 'leaders'));
+      }
       if (el.fateFilters) el.fateFilters.style.display = 'none';
+      if (el.campaignLoresFilters) el.campaignLoresFilters.style.display = 'none';
+      if (el.campaignGuildVoxFilters) el.campaignGuildVoxFilters.style.display = 'none';
       updateHash();
     });
   });
+
+  // Ensure leader-specific clicks immediately activate the base 'Leaders' sub-tab
+  if (el.leaderSubTabs) {
+    const leaderButtons = el.leaderSubTabs.querySelectorAll('.sub-tab');
+    leaderButtons.forEach((btn) => {
+      btn.addEventListener('click', () => {
+        // Activate main Base tab and show base sub-tabs
+        const baseTab = Array.from(el.tabs).find(t => t.dataset.tab === 'base');
+        if (baseTab) {
+          el.tabs.forEach((t) => t.classList.remove('active'));
+          baseTab.classList.add('active');
+        }
+        el.baseSubTabs.style.display = '';
+        el.leaderSubTabs.style.display = '';
+
+        // Mark Base -> Leaders as active
+        if (el.baseSubTabsButtons) {
+          el.baseSubTabsButtons.forEach((bb) => bb.classList.toggle('active', bb.dataset.subtab === 'leaders'));
+        }
+
+        // Set this leader button active and update view
+        el.subTabs.forEach((t) => t.classList.remove('active'));
+        btn.classList.add('active');
+        currentLeaderTab = btn.dataset.subtab;
+        const sectionKey = currentLeaderTab === '3p' ? 'leaders3p' : 'leaders4p';
+        Object.entries(sections).forEach(([key, section]) => {
+          section.classList.toggle('hidden', key !== sectionKey);
+        });
+        if (el.fateFilters) el.fateFilters.style.display = 'none';
+        if (el.campaignLoresFilters) el.campaignLoresFilters.style.display = 'none';
+        if (el.campaignGuildVoxFilters) el.campaignGuildVoxFilters.style.display = 'none';
+        updateHash();
+      });
+    });
+  }
 
   // Base sub-tabs switching
   el.baseSubTabsButtons.forEach((b) => {
@@ -2441,6 +2518,8 @@ function initTabs() {
       }
       updateHash();
       if (el.fateFilters) el.fateFilters.style.display = 'none';
+      if (el.campaignLoresFilters) el.campaignLoresFilters.style.display = 'none';
+      if (el.campaignGuildVoxFilters) el.campaignGuildVoxFilters.style.display = 'none';
     });
   });
 
@@ -2493,6 +2572,8 @@ function initTabs() {
   
   // Set initial tab from hash
   setTabFromHash();
+  // Respond to future hash changes (allow linking to #base-leaders-4p etc.)
+  window.addEventListener('hashchange', setTabFromHash);
   
   // Update hash to reflect current state (in case no hash was set)
   updateHash();
