@@ -1,0 +1,23 @@
+{
+  "name": "Arcs Arsenal",
+  "short_name": "Arcs",
+  "description": "Arcs board game tools - ranked data and custom cards.",
+  "start_url": "./?homescreen=1",
+  "display": "standalone",
+  "background_color": "transparent",
+  "theme_color": "#8b5cf6",
+  "icons": [
+    {
+      "src": "./android-chrome-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./android-chrome-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}
