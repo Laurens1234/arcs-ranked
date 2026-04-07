@@ -31,6 +31,26 @@ html {
   width: 220px;
 }
 
+/* Random draft: count input attached to the button */
+.draft-group {
+  display: flex;
+  align-items: stretch;
+}
+
+.draft-group .draft-count {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  width: 72px;
+  min-width: 0;
+}
+
+.draft-group .draft-btn {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+  background: var(--bg-solid);
+  color: var(--text);
+}
+
 /* Type badge on cards */
 .gen-card-type-badge {
   position: absolute;

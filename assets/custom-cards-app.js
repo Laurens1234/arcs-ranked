@@ -122,6 +122,8 @@ const el = {
   historyModalTitle: document.getElementById("historyModalTitle"),
   historyModalStatus: document.getElementById("historyModalStatus"),
   historyModalGrid: document.getElementById("historyModalGrid"),
+  randomDraftCount: document.getElementById("randomDraftCount"),
+  randomDraftBtn: document.getElementById("randomDraftBtn"),
 };
 
 // ========== State ==========
@@ -263,11 +265,102 @@ function toggleTheme() {
 }
 
 // ========== Data Loading ==========
+const DIR_LIST_CACHE_TTL_MS = 12 * 60 * 60 * 1000; // 12 hours
+
+function getGitHubToken() {
+  try {
+    return localStorage.getItem("arcs-github-token") || "";
+  } catch (e) {
+    return "";
+  }
+}
+
+function githubApiHeaders() {
+  const token = getGitHubToken();
+  const headers = {
+    Accept: "application/vnd.github+json",
+  };
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+  return headers;
+}
+
+function dirListCacheKey(path) {
+  return `arcs-dirlist-v1:${REPO_OWNER}/${REPO_NAME}@${BRANCH}:${path}`;
+}
+
+function readDirListCache(path, { allowStale = false } = {}) {
+  try {
+    const raw = localStorage.getItem(dirListCacheKey(path));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    const ts = parsed?.ts;
+    const data = parsed?.data;
+    if (!Array.isArray(data) || !Number.isFinite(ts)) return null;
+    const isFresh = (Date.now() - ts) <= DIR_LIST_CACHE_TTL_MS;
+    if (!allowStale && !isFresh) return null;
+    return data;
+  } catch (e) {
+    return null;
+  }
+}
+
+function writeDirListCache(path, data) {
+  try {
+    if (!Array.isArray(data)) return;
+    localStorage.setItem(dirListCacheKey(path), JSON.stringify({ ts: Date.now(), data }));
+  } catch (e) {
+    // ignore quota / privacy mode
+  }
+}
+
 async function fetchGitHubDir(path) {
+  const cached = readDirListCache(path);
+  if (cached) return cached;
+
   const url = `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/contents/${path}?ref=${BRANCH}`;
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`GitHub API error ${res.status} for ${path}`);
-  return res.json();
+  let res;
+  try {
+    res = await fetch(url, {
+      headers: githubApiHeaders(),
+    });
+  } catch (e) {
+    // Network errors: try stale cache, then mirror.
+    const stale = readDirListCache(path, { allowStale: true });
+    if (stale) return stale;
+    throw e;
+  }
+
+  if (res.ok) {
+    const json = await res.json();
+    const list = Array.isArray(json) ? json : [];
+    writeDirListCache(path, list);
+    return list;
+  }
+
+  let extra = "";
+  try {
+    const remaining = res.headers.get("x-ratelimit-remaining");
+    const reset = res.headers.get("x-ratelimit-reset");
+    if (res.status === 403 && remaining === "0") {
+      const resetMs = reset ? (parseInt(reset, 10) * 1000) : null;
+      const mins = resetMs && Number.isFinite(resetMs) ? Math.max(1, Math.ceil((resetMs - Date.now()) / 60000)) : null;
+      const resetText = mins ? `; try again in ~${mins} min` : "";
+      if (!getGitHubToken()) {
+        extra = `${resetText}. Optional fix: set a GitHub token in localStorage key 'arcs-github-token' to raise rate limits.`;
+      } else {
+        extra = resetText;
+      }
+    }
+  } catch (e) {
+    // ignore
+  }
+
+  // Rate limit / abuse protection: fall back to stale cache if possible.
+  const stale = readDirListCache(path, { allowStale: true });
+  if (stale) return stale;
+  throw new Error(`GitHub API error ${res.status} for ${path}${extra ? " (" + extra + ")" : ""}`);
 }
 
 function encodePath(path) {
@@ -325,9 +418,7 @@ async function fetchGitHubCommitHistory(path, perPage = 12) {
     try {
       res = await fetch(url, {
         signal: controller.signal,
-        headers: {
-          Accept: "application/vnd.github+json",
-        },
+        headers: githubApiHeaders(),
       });
     } catch (e) {
       if (controller.signal.aborted) {
@@ -388,9 +479,7 @@ async function fetchGitHubCommitHistoryAll(path) {
 
         const res = await fetch(url, {
           signal: controller.signal,
-          headers: {
-            Accept: "application/vnd.github+json",
-          },
+          headers: githubApiHeaders(),
         });
 
         if (!res.ok) {
@@ -1506,13 +1595,55 @@ function closeHistoryModal() {
 }
 
 // ========== Selection ==========
+function syncSelectModeUi() {
+  const selectBtn = document.getElementById("selectBtn");
+  const selectActions = document.getElementById("selectActions");
+  if (selectBtn) selectBtn.textContent = selectMode ? "✅ Done" : "☑ Select";
+  if (selectActions) selectActions.style.display = selectMode ? "inline-flex" : "none";
+}
+
 function toggleSelectMode() {
   selectMode = !selectMode;
-  document.getElementById("selectBtn").textContent = selectMode ? "✅ Done" : "☑ Select";
-  document.getElementById("selectActions").style.display = selectMode ? "inline-flex" : "none";
+  syncSelectModeUi();
   if (!selectMode) {
     // Keep selections but exit visual mode
   }
+  render();
+}
+
+function pickRandomSubset(array, count) {
+  const n = Math.max(0, Math.min(count, array.length));
+  // Partial Fisher-Yates shuffle (only first n positions)
+  const arr = array.slice();
+  for (let i = 0; i < n; i++) {
+    const j = i + Math.floor(Math.random() * (arr.length - i));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr.slice(0, n);
+}
+
+function getRandomDraftCount() {
+  const raw = el.randomDraftCount?.value;
+  const parsed = parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return 1;
+  return parsed;
+}
+
+function randomDraft() {
+  const pool = getFilteredCards();
+  if (pool.length === 0) return;
+
+  const desired = getRandomDraftCount();
+  const n = Math.max(1, Math.min(desired, pool.length));
+
+  if (!selectMode) {
+    selectMode = true;
+    syncSelectModeUi();
+  }
+
+  selectedCards.clear();
+  const picked = pickRandomSubset(pool, n);
+  for (const card of picked) selectedCards.add(card.imageUrl);
   render();
 }
 
@@ -1646,6 +1777,12 @@ function init() {
   document.getElementById("selectBtn").addEventListener("click", toggleSelectMode);
   document.getElementById("selectAllBtn").addEventListener("click", selectAll);
   document.getElementById("deselectAllBtn").addEventListener("click", deselectAll);
+
+  // Random draft
+  el.randomDraftBtn?.addEventListener("click", randomDraft);
+  el.randomDraftCount?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") randomDraft();
+  });
 
   // Tabs
   el.tabs.forEach((tab) => {
