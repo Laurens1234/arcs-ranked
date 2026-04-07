@@ -16,7 +16,9 @@ const BEYOND_NAMES = [
   "Diplomat",
   "Imperator",
   "Ancient Wraith",
-  "Poet"
+  "Poet",
+  "Brainbox",
+  "Brain Box"
 ];
 const BEYOND_SET = new Set(BEYOND_NAMES.map(n => normalizeName(n)));
 
@@ -112,6 +114,14 @@ const el = {
   lightboxMeta: document.getElementById("lightboxMeta"),
   lightboxAbilities: document.getElementById("lightboxAbilities"),
   lightboxBackdrop: document.querySelector(".lightbox-backdrop"),
+  historyBtn: document.getElementById("historyBtn"),
+  historyModal: document.getElementById("historyModal"),
+  historyModalBackdrop: document.querySelector(".history-modal-backdrop"),
+  historyModalContent: document.querySelector(".history-modal-content"),
+  historyModalClose: document.getElementById("historyModalClose"),
+  historyModalTitle: document.getElementById("historyModalTitle"),
+  historyModalStatus: document.getElementById("historyModalStatus"),
+  historyModalGrid: document.getElementById("historyModalGrid"),
 };
 
 // ========== State ==========
@@ -120,6 +130,115 @@ let activeTab = "leaders";
 let selectMode = false;
 let selectedCards = new Set(); // stores card imageUrl as unique key
 let currentLightboxCard = null;
+
+// Lightbox History state
+let historyLoadedForPath = null;
+const commitHistoryCache = new Map(); // path -> commits[]
+const commitHistoryInFlight = new Map(); // cacheKey -> Promise
+let lightboxSwapToken = 0;
+
+// Sorting: last changed
+const lastChangedMsByPath = new Map(); // path -> number|null (ms since epoch)
+const lastChangedInFlightByPath = new Map(); // path -> Promise<number|null>
+let lastChangedPrefetchToken = 0;
+
+async function fetchLastChangedMsForPath(path) {
+  if (!path) return null;
+  if (lastChangedMsByPath.has(path)) return lastChangedMsByPath.get(path);
+  if (lastChangedInFlightByPath.has(path)) return lastChangedInFlightByPath.get(path);
+
+  const p = (async () => {
+    try {
+      // Prefer a HEAD request to the raw URL (no GitHub API rate limit).
+      try {
+        const headUrl = rawUrlForRef(BRANCH, path);
+        const res = await fetch(headUrl, { method: "HEAD" });
+        if (res && res.ok) {
+          const lastMod = res.headers.get("last-modified");
+          const headMs = lastMod ? Date.parse(lastMod) : null;
+          if (Number.isFinite(headMs)) {
+            lastChangedMsByPath.set(path, headMs);
+            return headMs;
+          }
+        }
+      } catch (e) {
+        // Fall back to commits API below.
+      }
+
+      // Fallback: latest commit date for that file.
+      const commits = await fetchGitHubCommitHistory(path, 1);
+      const c = Array.isArray(commits) && commits.length ? commits[0] : null;
+      const iso = c?.commit?.author?.date || c?.commit?.committer?.date;
+      const apiMs = iso ? Date.parse(iso) : null;
+      lastChangedMsByPath.set(path, Number.isFinite(apiMs) ? apiMs : null);
+      return lastChangedMsByPath.get(path);
+    } catch (e) {
+      // Cache as unknown to avoid hammering the API.
+      lastChangedMsByPath.set(path, null);
+      return null;
+    }
+  })();
+
+  lastChangedInFlightByPath.set(path, p);
+  try {
+    return await p;
+  } finally {
+    lastChangedInFlightByPath.delete(path);
+  }
+}
+
+function prefetchLastChangedDatesForCards(cards) {
+  if (!Array.isArray(cards) || cards.length === 0) return;
+  const token = ++lastChangedPrefetchToken;
+
+  const paths = [];
+  const seen = new Set();
+  for (const c of cards) {
+    const p = getGithubFilePathForCard(c);
+    if (!p || seen.has(p)) continue;
+    seen.add(p);
+    if (!lastChangedMsByPath.has(p)) paths.push(p);
+  }
+  if (paths.length === 0) return;
+
+  const total = paths.length;
+  let done = 0;
+  if (el.status) el.status.textContent = `Loading change dates… (0/${total})`;
+
+  const concurrency = 6;
+  let index = 0;
+
+  const worker = async () => {
+    while (true) {
+      const i = index++;
+      if (i >= paths.length) return;
+      await fetchLastChangedMsForPath(paths[i]);
+      done++;
+
+      if (token === lastChangedPrefetchToken && el.status) {
+        if (done === total || done % 12 === 0) {
+          el.status.textContent = `Loading change dates… (${done}/${total})`;
+        }
+      }
+    }
+  };
+
+  (async () => {
+    try {
+      await Promise.all(Array.from({ length: Math.min(concurrency, total) }, () => worker()));
+    } finally {
+      if (token !== lastChangedPrefetchToken) return;
+      if (el.status && String(el.status.textContent || "").startsWith("Loading change dates")) {
+        el.status.textContent = "";
+      }
+      const sortMode = getLeaderSortMode();
+      const isLeaderTab = activeTab === "leaders" || activeTab === "beyond";
+      if (isLeaderTab && sortMode === "lastChanged") {
+        render();
+      }
+    }
+  })();
+}
 
 let leaderOrderByName = new Map(); // key: normalizeName(leaderName) -> number (1-based)
 let leaderAbilityCharsByName = new Map(); // key: normalizeName(leaderName) -> number (chars in ability names + text)
@@ -149,6 +268,422 @@ async function fetchGitHubDir(path) {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`GitHub API error ${res.status} for ${path}`);
   return res.json();
+}
+
+function encodePath(path) {
+  return String(path)
+    .split("/")
+    .map((seg) => encodeURIComponent(seg))
+    .join("/");
+}
+
+function getGithubFilePathForCard(card) {
+  if (!card) return "";
+  if (card.githubPath) return String(card.githubPath);
+  if (card.type === "Lore") return `${LORE_PATH}/${card.filename}`;
+  return `${LEADERS_PATH}/${card.filename}`;
+}
+
+function rawUrlForRef(ref, path) {
+  return `https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/${ref}/${encodePath(path)}`;
+}
+
+function githubRawUrlForRef(ref, path) {
+  return `https://github.com/${REPO_OWNER}/${REPO_NAME}/raw/${ref}/${encodePath(path)}`;
+}
+
+function jsDelivrUrlForRef(ref, path) {
+  // jsDelivr supports GitHub repos by commit/tag/branch.
+  return `https://cdn.jsdelivr.net/gh/${REPO_OWNER}/${REPO_NAME}@${ref}/${encodePath(path)}`;
+}
+
+function getHistoricalImageCandidateUrls(ref, path) {
+  // Try a few equivalent CDNs/hosts to reduce the chance of user-side blocking.
+  return [
+    rawUrlForRef(ref, path),
+    githubRawUrlForRef(ref, path),
+    jsDelivrUrlForRef(ref, path),
+  ];
+}
+
+async function fetchGitHubCommitHistory(path, perPage = 12) {
+  if (!path) return [];
+  const cacheKey = `${path}|${perPage}`;
+  if (commitHistoryCache.has(cacheKey)) return commitHistoryCache.get(cacheKey);
+
+  if (commitHistoryInFlight.has(cacheKey)) return commitHistoryInFlight.get(cacheKey);
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 15000);
+
+  const url = `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/commits?sha=${encodeURIComponent(
+    BRANCH
+  )}&path=${encodeURIComponent(path)}&per_page=${encodeURIComponent(perPage)}`;
+
+  const p = (async () => {
+    let res;
+    try {
+      res = await fetch(url, {
+        signal: controller.signal,
+        headers: {
+          Accept: "application/vnd.github+json",
+        },
+      });
+    } catch (e) {
+      if (controller.signal.aborted) {
+        throw new Error("GitHub request timed out; try again.");
+      }
+      throw e;
+    } finally {
+      clearTimeout(timeoutId);
+    }
+
+    if (!res.ok) {
+      let extra = "";
+      try {
+        const remaining = res.headers.get("x-ratelimit-remaining");
+        if (res.status === 403 && remaining === "0") {
+          extra = " (GitHub rate limit reached; try again later)";
+        }
+      } catch (e) {
+        // ignore
+      }
+      throw new Error(`GitHub commits API error ${res.status} for ${path}${extra}`);
+    }
+
+    const commits = await res.json();
+    const list = Array.isArray(commits) ? commits : [];
+    commitHistoryCache.set(cacheKey, list);
+    return list;
+  })();
+
+  commitHistoryInFlight.set(cacheKey, p);
+  try {
+    return await p;
+  } finally {
+    commitHistoryInFlight.delete(cacheKey);
+  }
+}
+
+async function fetchGitHubCommitHistoryAll(path) {
+  if (!path) return [];
+  const cacheKey = `${path}|all`;
+  if (commitHistoryCache.has(cacheKey)) return commitHistoryCache.get(cacheKey);
+
+  if (commitHistoryInFlight.has(cacheKey)) return commitHistoryInFlight.get(cacheKey);
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 20000);
+
+  const p = (async () => {
+    const all = [];
+    const perPage = 100;
+    const maxPages = 10; // safety cap (1000 commits)
+
+    try {
+      for (let page = 1; page <= maxPages; page++) {
+        const url = `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/commits?sha=${encodeURIComponent(
+          BRANCH
+        )}&path=${encodeURIComponent(path)}&per_page=${perPage}&page=${page}`;
+
+        const res = await fetch(url, {
+          signal: controller.signal,
+          headers: {
+            Accept: "application/vnd.github+json",
+          },
+        });
+
+        if (!res.ok) {
+          let extra = "";
+          try {
+            const remaining = res.headers.get("x-ratelimit-remaining");
+            if (res.status === 403 && remaining === "0") {
+              extra = " (GitHub rate limit reached; try again later)";
+            }
+          } catch (e) {
+            // ignore
+          }
+          throw new Error(`GitHub commits API error ${res.status} for ${path}${extra}`);
+        }
+
+        const pageCommits = await res.json();
+        const list = Array.isArray(pageCommits) ? pageCommits : [];
+        if (list.length === 0) break;
+        all.push(...list);
+        if (list.length < perPage) break;
+      }
+    } catch (e) {
+      if (controller.signal.aborted) {
+        throw new Error("GitHub request timed out; try again.");
+      }
+      throw e;
+    } finally {
+      clearTimeout(timeoutId);
+    }
+
+    commitHistoryCache.set(cacheKey, all);
+    return all;
+  })();
+
+  commitHistoryInFlight.set(cacheKey, p);
+  try {
+    return await p;
+  } finally {
+    commitHistoryInFlight.delete(cacheKey);
+  }
+}
+
+function resetHistoryUi() {
+  historyLoadedForPath = null;
+  if (el.historyBtn) el.historyBtn.setAttribute("aria-expanded", "false");
+  if (el.historyModal) {
+    el.historyModal.classList.add("hidden");
+    el.historyModal.setAttribute("aria-hidden", "true");
+  }
+  if (el.historyModalStatus) el.historyModalStatus.textContent = "";
+  if (el.historyModalGrid) el.historyModalGrid.innerHTML = "";
+}
+
+function setHistoryUiVisible(visible) {
+  if (!el.historyModal || !el.historyBtn) return;
+  el.historyModal.classList.toggle("hidden", !visible);
+  el.historyModal.setAttribute("aria-hidden", visible ? "false" : "true");
+  el.historyBtn.setAttribute("aria-expanded", visible ? "true" : "false");
+  document.body.style.overflow = visible ? "hidden" : (el.lightbox && !el.lightbox.classList.contains("hidden") ? "hidden" : "");
+}
+
+function formatCommitCaption(commitObj) {
+  const iso = commitObj?.commit?.author?.date || commitObj?.commit?.committer?.date;
+  if (!iso) return "";
+  // Keep it compact and consistent across locales.
+  return new Date(iso).toISOString().slice(0, 10);
+}
+
+function selectHistoryItem(btn) {
+  if (!el.historyModalGrid) return;
+  for (const child of el.historyModalGrid.querySelectorAll(".history-item.selected")) {
+    child.classList.remove("selected");
+  }
+  if (btn) btn.classList.add("selected");
+}
+
+function swapLightboxImage(nextUrl, opts = {}) {
+  if (!el.lightboxImg) return;
+
+  const {
+    statusText = "",
+    onErrorFallbackUrl = null,
+    onErrorMessage = "",
+  } = opts;
+
+  if (el.historyModalStatus && statusText) el.historyModalStatus.textContent = statusText;
+
+  const img = el.lightboxImg;
+  const prevOnLoad = img.onload;
+  const prevOnError = img.onerror;
+
+  img.onload = () => {
+    if (el.historyModalStatus && statusText) el.historyModalStatus.textContent = "";
+    img.onload = prevOnLoad;
+    img.onerror = prevOnError;
+    if (typeof prevOnLoad === "function") prevOnLoad();
+  };
+
+  img.onerror = () => {
+    if (el.historyModalStatus) {
+      el.historyModalStatus.textContent = onErrorMessage || "Could not load that version.";
+    }
+    img.onload = prevOnLoad;
+    img.onerror = prevOnError;
+    if (onErrorFallbackUrl) {
+      // Avoid leaving a broken URL stuck in the lightbox.
+      img.src = onErrorFallbackUrl;
+    }
+    if (typeof prevOnError === "function") prevOnError();
+  };
+
+  // Assigning the same URL twice can re-trigger requests in some browsers.
+  if (img.src === nextUrl) return;
+  img.src = nextUrl;
+}
+
+function swapLightboxImageWithFallback(urls, opts = {}) {
+  if (!el.lightboxImg) return;
+  const img = el.lightboxImg;
+
+  const token = ++lightboxSwapToken;
+  const {
+    statusText = "",
+    onErrorFallbackUrl = null,
+    onErrorMessage = "Could not load that version.",
+  } = opts;
+
+  let index = 0;
+  let lastTried = "";
+
+  const prevOnLoad = img.onload;
+  const prevOnError = img.onerror;
+
+  function cleanup() {
+    img.onload = prevOnLoad;
+    img.onerror = prevOnError;
+  }
+
+  function tryNext() {
+    if (token !== lightboxSwapToken) return;
+
+    if (!Array.isArray(urls) || index >= urls.length) {
+      if (el.historyModalStatus) {
+        el.historyModalStatus.textContent = `${onErrorMessage}${lastTried ? " Tried: " + lastTried : ""}`;
+      }
+      cleanup();
+      if (onErrorFallbackUrl) img.src = onErrorFallbackUrl;
+      return;
+    }
+
+    const nextUrl = urls[index++];
+    lastTried = nextUrl;
+
+    if (el.historyModalStatus && statusText) {
+      el.historyModalStatus.textContent = statusText;
+    }
+
+    img.onload = () => {
+      if (token !== lightboxSwapToken) return;
+      if (el.historyModalStatus && statusText) el.historyModalStatus.textContent = "";
+      cleanup();
+      if (typeof prevOnLoad === "function") prevOnLoad();
+    };
+
+    img.onerror = () => {
+      if (token !== lightboxSwapToken) return;
+      tryNext();
+    };
+
+    img.src = nextUrl;
+  }
+
+  tryNext();
+}
+
+function setImgSrcWithFallback(imgEl, urls) {
+  if (!imgEl) return;
+  if (!Array.isArray(urls) || urls.length === 0) return;
+
+  let index = 0;
+  function tryNext() {
+    if (index >= urls.length) return;
+    const next = urls[index++];
+    imgEl.src = next;
+  }
+
+  imgEl.addEventListener(
+    "error",
+    () => {
+      tryNext();
+    },
+    { once: false }
+  );
+
+  tryNext();
+}
+
+async function showHistoryForCurrentCard() {
+  const card = currentLightboxCard;
+  if (!card || !el.historyModalGrid || !el.historyModalStatus) return;
+
+  const path = getGithubFilePathForCard(card);
+  setHistoryUiVisible(true);
+
+  if (el.historyModalTitle) el.historyModalTitle.textContent = `Previous Versions: ${card.name}`;
+
+  if (el.historyBtn) el.historyBtn.disabled = true;
+  try {
+    // If we've already loaded this card's history, just keep it open.
+    if (historyLoadedForPath === path && el.historyModalGrid.childElementCount > 0) return;
+
+    el.historyModalStatus.textContent = "Loading versions…";
+    el.historyModalGrid.innerHTML = "";
+
+    let commits = [];
+    try {
+      commits = await fetchGitHubCommitHistoryAll(path);
+    } catch (e) {
+      el.historyModalStatus.textContent = `Could not load previous versions: ${e.message}`;
+      return;
+    }
+
+    historyLoadedForPath = path;
+
+    // Current version
+    const currentBtn = document.createElement("button");
+    currentBtn.type = "button";
+    currentBtn.className = "history-item selected";
+    currentBtn.addEventListener("click", () => {
+      swapLightboxImage(card.imageUrl, { statusText: "" });
+      selectHistoryItem(currentBtn);
+    });
+    const curImg = document.createElement("img");
+    curImg.className = `history-thumb ${card.type === "Lore" ? "lore" : "leader"}`;
+    curImg.loading = "lazy";
+    curImg.alt = `${card.name} (current)`;
+    curImg.src = card.imageUrl;
+    const curCap = document.createElement("div");
+    curCap.className = "history-caption";
+    const currentDate = commits.length ? formatCommitCaption(commits[0]) : "";
+    curCap.textContent = currentDate ? `Current — ${currentDate}` : "Current";
+    currentBtn.appendChild(curImg);
+    currentBtn.appendChild(curCap);
+    el.historyModalGrid.appendChild(currentBtn);
+
+    if (!commits.length) {
+      el.historyModalStatus.textContent = "No older versions found.";
+      return;
+    }
+
+    el.historyModalStatus.textContent = `${commits.length} version(s)`;
+
+    for (const c of commits) {
+      const sha = c?.sha;
+      if (!sha) continue;
+      const candidates = getHistoricalImageCandidateUrls(sha, path);
+      const previewUrl = candidates[0];
+
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "history-item";
+      btn.addEventListener("click", () => {
+        swapLightboxImageWithFallback(candidates, {
+          statusText: `Loading ${card.name} @ ${sha.slice(0, 7)}…`,
+          onErrorFallbackUrl: card.imageUrl,
+          onErrorMessage: `Could not load ${card.name} @ ${sha.slice(0, 7)}.`,
+        });
+        selectHistoryItem(btn);
+      });
+
+      const img = document.createElement("img");
+      img.className = `history-thumb ${card.type === "Lore" ? "lore" : "leader"}`;
+      img.loading = "lazy";
+      img.alt = `${card.name} (${sha.slice(0, 7)})`;
+      // Use fallback hosts for thumbnail too; prevents endless 404 spam.
+      setImgSrcWithFallback(img, candidates);
+
+      // If the first candidate works, great; if it doesn't, error handler will advance.
+      // Ensure we start at a deterministic URL to avoid any browser prefetch oddities.
+      if (!img.src) img.src = previewUrl;
+
+      const cap = document.createElement("div");
+      cap.className = "history-caption";
+      const caption = formatCommitCaption(c);
+      cap.textContent = caption;
+
+      btn.appendChild(img);
+      btn.appendChild(cap);
+      el.historyModalGrid.appendChild(btn);
+    }
+  } finally {
+    if (el.historyBtn) el.historyBtn.disabled = false;
+  }
 }
 
 function nameFromFile(filename, type) {
@@ -188,6 +723,7 @@ async function loadCards() {
         name: nameFromFile(f.name, "Leader"),
         type: "Leader",
         filename: f.name,
+        githubPath: `${LEADERS_PATH}/${f.name}`,
         imageUrl: `${RAW_BASE}/${LEADERS_PATH}/${encodeURIComponent(f.name)}`,
       }));
 
@@ -197,12 +733,11 @@ async function loadCards() {
         name: nameFromFile(f.name, "Lore"),
         type: "Lore",
         filename: f.name,
+        githubPath: `${LORE_PATH}/${f.name}`,
         imageUrl: `${RAW_BASE}/${LORE_PATH}/${encodeURIComponent(f.name)}`,
       }));
 
-    allCards = [...leaders, ...lore].sort((a, b) =>
-      a.name.localeCompare(b.name)
-    );
+    allCards = [...leaders, ...lore].sort((a, b) => a.name.localeCompare(b.name));
 
     el.status.textContent = "";
     render();
@@ -750,14 +1285,32 @@ function getFilteredCards() {
     cards = cards.filter((c) => cardMatchesQuery(c, q, mode));
   }
 
-  // Sorting (leaders tab only)
-  if (activeTab === "leaders") {
+  // Sorting (leader-based tabs only)
+  if (activeTab === "leaders" || activeTab === "beyond") {
     const sortMode = getLeaderSortMode();
     if (sortMode === "number") {
       cards = [...cards].sort((a, b) => {
         const aNum = leaderOrderByName.get(normalizeName(a.name)) ?? Number.POSITIVE_INFINITY;
         const bNum = leaderOrderByName.get(normalizeName(b.name)) ?? Number.POSITIVE_INFINITY;
         if (aNum !== bNum) return aNum - bNum;
+        return a.name.localeCompare(b.name);
+      });
+    } else if (sortMode === "lastChanged") {
+      // Kick off background fetches; sorting will improve as dates arrive.
+      prefetchLastChangedDatesForCards(cards);
+
+      cards = [...cards].sort((a, b) => {
+        const aPath = getGithubFilePathForCard(a);
+        const bPath = getGithubFilePathForCard(b);
+        const aMs = lastChangedMsByPath.has(aPath) ? lastChangedMsByPath.get(aPath) : null;
+        const bMs = lastChangedMsByPath.has(bPath) ? lastChangedMsByPath.get(bPath) : null;
+
+        const aKnown = typeof aMs === "number" && Number.isFinite(aMs);
+        const bKnown = typeof bMs === "number" && Number.isFinite(bMs);
+        if (aKnown !== bKnown) return aKnown ? -1 : 1;
+        if (!aKnown && !bKnown) return a.name.localeCompare(b.name);
+
+        if (aMs !== bMs) return bMs - aMs; // newest first
         return a.name.localeCompare(b.name);
       });
     } else if (sortMode === "abilityCharsAsc" || sortMode === "abilityCharsDesc") {
@@ -930,6 +1483,7 @@ function openLightbox(card) {
   currentLightboxCard = card;
   el.lightboxImg.src = card.imageUrl;
   el.lightboxImg.alt = card.name;
+  resetHistoryUi();
   updateLightboxDetails(card);
   el.lightbox.classList.remove("hidden");
   document.body.style.overflow = "hidden";
@@ -941,8 +1495,14 @@ function closeLightbox() {
   el.lightboxImg.src = "";
   currentLightboxCard = null;
   clearLightboxDetails();
+  resetHistoryUi();
   document.body.style.overflow = "";
   clearUrlCardName();
+}
+
+function closeHistoryModal() {
+  setHistoryUiVisible(false);
+  if (el.historyModalStatus) el.historyModalStatus.textContent = "";
 }
 
 // ========== Selection ==========
@@ -1140,8 +1700,39 @@ function init() {
 
   // Lightbox close
   el.lightboxBackdrop.addEventListener("click", closeLightbox);
+
+  // Lightbox history
+  if (el.historyBtn) {
+    el.historyBtn.addEventListener("click", async () => {
+      const isOpen = el.historyModal && !el.historyModal.classList.contains("hidden");
+      if (isOpen) {
+        closeHistoryModal();
+        return;
+      }
+      await showHistoryForCurrentCard();
+    });
+  }
+
+  if (el.historyModalClose) {
+    el.historyModalClose.addEventListener("click", closeHistoryModal);
+  }
+  if (el.historyModalBackdrop) {
+    el.historyModalBackdrop.addEventListener("click", closeHistoryModal);
+  }
+  if (el.historyModalContent) {
+    el.historyModalContent.addEventListener("click", (e) => {
+      // Clicking the empty gutters (transparent sides) should dismiss.
+      if (e.target === el.historyModalContent) closeHistoryModal();
+    });
+  }
+
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") closeLightbox();
+    if (e.key !== "Escape") return;
+    if (el.historyModal && !el.historyModal.classList.contains("hidden")) {
+      closeHistoryModal();
+      return;
+    }
+    closeLightbox();
   });
 
   window.addEventListener("hashchange", () => {

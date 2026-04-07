@@ -100,6 +100,7 @@
           <select id="sortSelect" class="select" aria-label="Order leaders" style="display:none">
             <option value="number" selected>Order: Card #</option>
             <option value="name">Order: Name</option>
+            <option value="lastChanged">Order: Last changed</option>
             <option value="abilityCharsAsc">Order: Length ↑</option>
             <option value="abilityCharsDesc">Order: Length ↓</option>
           </select>
@@ -144,7 +145,23 @@
           <div id="lightboxTitle" class="lightbox-title"></div>
           <div id="lightboxMeta" class="lightbox-meta"></div>
           <div id="lightboxAbilities" class="lightbox-abilities"></div>
+          <div class="lightbox-actions">
+            <button id="historyBtn" class="btn-compare" type="button" aria-expanded="false">Previous Versions</button>
+          </div>
         </div>
+      </div>
+    </div>
+
+    <!-- Full-screen Previous Versions Modal -->
+    <div id="historyModal" class="history-modal hidden" aria-hidden="true">
+      <div class="history-modal-backdrop"></div>
+      <div class="history-modal-content" role="dialog" aria-modal="true" aria-label="Previous versions">
+        <div class="history-modal-header">
+          <div id="historyModalTitle" class="history-modal-title">Previous Versions</div>
+          <button id="historyModalClose" class="btn-compare" type="button">✕</button>
+        </div>
+        <div id="historyModalStatus" class="history-status"></div>
+        <div id="historyModalGrid" class="history-grid"></div>
       </div>
     </div>
 
