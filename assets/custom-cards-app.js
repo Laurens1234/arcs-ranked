@@ -131,6 +131,7 @@ let allCards = [];
 let activeTab = "leaders";
 let selectMode = false;
 let selectedCards = new Set(); // stores card imageUrl as unique key
+let draftViewActive = false; // when true, only render selected cards (used by Random Draft)
 let currentLightboxCard = null;
 
 // Lightbox History state
@@ -1426,7 +1427,10 @@ function getFilteredCards() {
 function render() {
   updateResourceDropdownCounts();
   updateSetupDropdownOptionsAndCounts();
-  const cards = getFilteredCards();
+  let cards = getFilteredCards();
+  if (draftViewActive && selectedCards.size > 0) {
+    cards = cards.filter((c) => selectedCards.has(c.imageUrl));
+  }
 
   if (cards.length === 0 && allCards.length > 0) {
     el.cardGrid.innerHTML = `<p class="status">No cards match your search.</p>`;
@@ -1607,6 +1611,7 @@ function toggleSelectMode() {
   syncSelectModeUi();
   if (!selectMode) {
     // Keep selections but exit visual mode
+    draftViewActive = false;
   }
   render();
 }
@@ -1641,6 +1646,8 @@ function randomDraft() {
     syncSelectModeUi();
   }
 
+  draftViewActive = true;
+
   selectedCards.clear();
   const picked = pickRandomSubset(pool, n);
   for (const card of picked) selectedCards.add(card.imageUrl);
@@ -1668,6 +1675,7 @@ function selectAll() {
 
 function deselectAll() {
   selectedCards.clear();
+  draftViewActive = false;
   render();
 }
 
@@ -1790,6 +1798,7 @@ function init() {
       el.tabs.forEach((t) => t.classList.remove("active"));
       tab.classList.add("active");
       activeTab = tab.dataset.tab;
+      draftViewActive = false;
       // reflect tab in the URL
       setUrlTab(activeTab);
       updateSortControlVisibility();
