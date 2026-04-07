@@ -177,6 +177,12 @@ async function fetchLastChangedMsForPath(path) {
         // Fall back to commits API below.
       }
 
+      // If we don't have a token, avoid hitting the commits API (likely rate-limited / blocked).
+      if (!getGitHubToken()) {
+        lastChangedMsByPath.set(path, null);
+        return null;
+      }
+
       // Fallback: latest commit date for that file.
       const commits = await fetchGitHubCommitHistory(path, 1);
       const c = Array.isArray(commits) && commits.length ? commits[0] : null;
@@ -821,6 +827,14 @@ function setImgSrcWithFallback(imgEl, urls) {
 async function showHistoryForCurrentCard() {
   const card = currentLightboxCard;
   if (!card || !el.historyModalGrid || !el.historyModalStatus) return;
+
+  if (!getGitHubToken()) {
+    setHistoryUiVisible(true);
+    if (el.historyModalTitle) el.historyModalTitle.textContent = `Previous Versions: ${card.name}`;
+    el.historyModalGrid.innerHTML = "";
+    el.historyModalStatus.textContent = "History requires a GitHub token (set localStorage key 'arcs-github-token').";
+    return;
+  }
 
   const path = getGithubFilePathForCard(card);
   setHistoryUiVisible(true);
