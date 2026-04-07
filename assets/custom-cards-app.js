@@ -7,6 +7,15 @@ const LORE_PATH = "results/lore";
 
 const RAW_BASE = `https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/${BRANCH}`;
 
+// Base URL for files that live next to this script (i.e., under this repo's /assets/ folder).
+const ASSETS_BASE_URL = (() => {
+  try {
+    return new URL("./", import.meta.url).href;
+  } catch (e) {
+    return "";
+  }
+})();
+
 // ======= Beyond the Reach ========
 // Names of leaders to show when the "beyond" tab is active
 const BEYOND_NAMES = [
@@ -316,9 +325,131 @@ function writeDirListCache(path, data) {
   }
 }
 
+let localManifestCache = null;
+let localManifestInFlight = null;
+
+function localManifestUrl() {
+  if (!ASSETS_BASE_URL) return "";
+  return new URL("leader-generator-manifest.json", ASSETS_BASE_URL).href;
+}
+
+async function fetchLocalManifest() {
+  if (localManifestCache) return localManifestCache;
+  if (localManifestInFlight) return localManifestInFlight;
+
+  const url = localManifestUrl();
+  if (!url) throw new Error("Local manifest URL unavailable");
+
+  const p = (async () => {
+    const res = await fetch(url, { cache: "no-store" });
+    if (!res.ok) throw new Error(`Local manifest fetch error ${res.status}`);
+    const json = await res.json();
+    const leaders = json?.leaders;
+    const lore = json?.lore;
+    if (!Array.isArray(leaders) || !Array.isArray(lore)) {
+      throw new Error("Local manifest invalid");
+    }
+    localManifestCache = { leaders, lore };
+    return localManifestCache;
+  })();
+
+  localManifestInFlight = p;
+  try {
+    return await p;
+  } finally {
+    localManifestInFlight = null;
+  }
+}
+
+async function fetchLocalManifestDir(path) {
+  if (path !== LEADERS_PATH && path !== LORE_PATH) return null;
+  const manifest = await fetchLocalManifest();
+  const names = path === LEADERS_PATH ? manifest.leaders : manifest.lore;
+  // Normalize to GitHub /contents-style entries that our UI expects.
+  return names.map((name) => ({ name, type: "file" }));
+}
+
+let jsDelivrPackageTreeCache = null; // full tree JSON from data.jsdelivr.com
+let jsDelivrPackageTreeInFlight = null;
+
+async function fetchJsDelivrPackageTree(ref) {
+  if (jsDelivrPackageTreeCache) return jsDelivrPackageTreeCache;
+  if (jsDelivrPackageTreeInFlight) return jsDelivrPackageTreeInFlight;
+
+  const url = `https://data.jsdelivr.com/v1/package/gh/${REPO_OWNER}/${REPO_NAME}@${encodeURIComponent(ref)}`;
+  const p = (async () => {
+    const res = await fetch(url);
+    if (!res.ok) {
+      throw new Error(`jsDelivr API error ${res.status}`);
+    }
+    const json = await res.json();
+    jsDelivrPackageTreeCache = json;
+    return json;
+  })();
+
+  jsDelivrPackageTreeInFlight = p;
+  try {
+    return await p;
+  } finally {
+    jsDelivrPackageTreeInFlight = null;
+  }
+}
+
+function findJsDelivrDirEntry(files, name) {
+  if (!Array.isArray(files)) return null;
+  for (const f of files) {
+    if (f && f.type === "directory" && f.name === name) return f;
+  }
+  return null;
+}
+
+async function fetchJsDelivrDir(path) {
+  const tree = await fetchJsDelivrPackageTree(BRANCH);
+  let curFiles = Array.isArray(tree?.files) ? tree.files : [];
+  const segs = String(path)
+    .split("/")
+    .filter(Boolean);
+
+  for (const seg of segs) {
+    const dir = findJsDelivrDirEntry(curFiles, seg);
+    if (!dir) return [];
+    curFiles = Array.isArray(dir.files) ? dir.files : [];
+  }
+
+  // Normalize to GitHub /contents-style entries that our UI expects.
+  return curFiles
+    .filter((f) => f && typeof f.name === "string" && (f.type === "file" || f.type === "directory"))
+    .map((f) => ({
+      name: f.name,
+      type: f.type === "directory" ? "dir" : "file",
+    }));
+}
+
 async function fetchGitHubDir(path) {
   const cached = readDirListCache(path);
   if (cached) return cached;
+
+  // Most reliable: use a local, pre-generated manifest bundled with this site.
+  // This avoids CORS and external rate limits entirely.
+  try {
+    const list = await fetchLocalManifestDir(path);
+    if (list) {
+      writeDirListCache(path, list);
+      return list;
+    }
+  } catch (e) {
+    // fall back to remote sources below
+  }
+
+  // Prefer jsDelivr for anonymous users to avoid GitHub API rate limits.
+  // This also reduces pressure on GitHub even when a token is configured.
+  try {
+    const list = await fetchJsDelivrDir(path);
+    writeDirListCache(path, list);
+    return list;
+  } catch (e) {
+    // fall back to GitHub API below
+  }
 
   const url = `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/contents/${path}?ref=${BRANCH}`;
   let res;
@@ -361,6 +492,15 @@ async function fetchGitHubDir(path) {
   // Rate limit / abuse protection: fall back to stale cache if possible.
   const stale = readDirListCache(path, { allowStale: true });
   if (stale) return stale;
+
+  // If the GitHub API fails (often due to rate limits), try jsDelivr as a last resort.
+  try {
+    const list = await fetchJsDelivrDir(path);
+    writeDirListCache(path, list);
+    return list;
+  } catch (e) {
+    // ignore, report GitHub failure below
+  }
   throw new Error(`GitHub API error ${res.status} for ${path}${extra ? " (" + extra + ")" : ""}`);
 }
 
