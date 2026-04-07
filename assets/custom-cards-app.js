@@ -135,6 +135,41 @@ const el = {
   randomDraftBtn: document.getElementById("randomDraftBtn"),
 };
 
+let lastChangedHelpBtn = null;
+
+function showGitHubTokenHelp() {
+  const msg = "To enable 'Last changed' / History: open DevTools Console and run: localStorage.setItem('arcs-github-token','YOUR_TOKEN'); then reload the page.";
+  if (el.status) {
+    el.status.textContent = msg;
+    el.status.classList.add("error");
+    setTimeout(() => {
+      if (!el.status) return;
+      if (String(el.status.textContent || "") === msg) {
+        el.status.textContent = "";
+        el.status.classList.remove("error");
+      }
+    }, 8000);
+  } else {
+    alert(msg);
+  }
+}
+
+function ensureLastChangedHelpBtn() {
+  if (lastChangedHelpBtn || !el.sortSelect) return;
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "btn-compare";
+  btn.textContent = "?";
+  btn.title = "How to enable Last changed";
+  btn.setAttribute("aria-label", "How to enable Last changed");
+  btn.style.padding = "8px 10px";
+  btn.style.fontSize = "0.9rem";
+  btn.style.minWidth = "unset";
+  btn.addEventListener("click", showGitHubTokenHelp);
+  el.sortSelect.insertAdjacentElement("afterend", btn);
+  lastChangedHelpBtn = btn;
+}
+
 // ========== State ==========
 let allCards = [];
 let activeTab = "leaders";
@@ -159,30 +194,14 @@ async function fetchLastChangedMsForPath(path) {
   if (lastChangedMsByPath.has(path)) return lastChangedMsByPath.get(path);
   if (lastChangedInFlightByPath.has(path)) return lastChangedInFlightByPath.get(path);
 
+  // Restrict last-changed to authenticated GitHub usage to avoid timeouts/403s.
+  if (!getGitHubToken()) {
+    lastChangedMsByPath.set(path, null);
+    return null;
+  }
+
   const p = (async () => {
     try {
-      // Prefer a HEAD request to the raw URL (no GitHub API rate limit).
-      try {
-        const headUrl = rawUrlForRef(BRANCH, path);
-        const res = await fetch(headUrl, { method: "HEAD" });
-        if (res && res.ok) {
-          const lastMod = res.headers.get("last-modified");
-          const headMs = lastMod ? Date.parse(lastMod) : null;
-          if (Number.isFinite(headMs)) {
-            lastChangedMsByPath.set(path, headMs);
-            return headMs;
-          }
-        }
-      } catch (e) {
-        // Fall back to commits API below.
-      }
-
-      // If we don't have a token, avoid hitting the commits API (likely rate-limited / blocked).
-      if (!getGitHubToken()) {
-        lastChangedMsByPath.set(path, null);
-        return null;
-      }
-
       // Fallback: latest commit date for that file.
       const commits = await fetchGitHubCommitHistory(path, 1);
       const c = Array.isArray(commits) && commits.length ? commits[0] : null;
@@ -207,6 +226,7 @@ async function fetchLastChangedMsForPath(path) {
 
 function prefetchLastChangedDatesForCards(cards) {
   if (!Array.isArray(cards) || cards.length === 0) return;
+  if (!getGitHubToken()) return;
   const token = ++lastChangedPrefetchToken;
 
   const paths = [];
@@ -256,6 +276,26 @@ function prefetchLastChangedDatesForCards(cards) {
       }
     }
   })();
+}
+
+function updateLastChangedSortAvailability() {
+  if (!el.sortSelect) return;
+  ensureLastChangedHelpBtn();
+  const opt = el.sortSelect.querySelector('option[value="lastChanged"]');
+  if (!opt) return;
+
+  const hasToken = Boolean(getGitHubToken());
+  opt.disabled = !hasToken;
+  opt.textContent = hasToken ? "Order: Last changed" : "Order: Last changed (token required)";
+
+  if (lastChangedHelpBtn) {
+    const showHelp = !hasToken && (activeTab === "leaders" || activeTab === "beyond");
+    lastChangedHelpBtn.style.display = showHelp ? "" : "none";
+  }
+
+  if (!hasToken && el.sortSelect.value === "lastChanged") {
+    el.sortSelect.value = "number";
+  }
 }
 
 let leaderOrderByName = new Map(); // key: normalizeName(leaderName) -> number (1-based)
@@ -1363,6 +1403,8 @@ function updateSortControlVisibility() {
   el.sortSelect.style.display = show ? "" : "none";
   if (el.resourceSelect) el.resourceSelect.style.display = show ? "" : "none";
   if (el.setupSelect) el.setupSelect.style.display = show ? "" : "none";
+
+  if (lastChangedHelpBtn) lastChangedHelpBtn.style.display = show ? "" : "none";
 }
 
 function filterLeaderCardsByResource(cards, resource) {
@@ -1956,6 +1998,7 @@ function init() {
       // reflect tab in the URL
       setUrlTab(activeTab);
       updateSortControlVisibility();
+      updateLastChangedSortAvailability();
       render();
     });
   });
@@ -1970,10 +2013,25 @@ function init() {
   }
 
   updateSortControlVisibility();
+  updateLastChangedSortAvailability();
 
   // Sort
   if (el.sortSelect) {
     el.sortSelect.addEventListener("change", () => {
+      // Prevent selecting last-changed without a token.
+      if (el.sortSelect.value === "lastChanged" && !getGitHubToken()) {
+        el.sortSelect.value = "number";
+        if (el.status) {
+          el.status.textContent = "Last changed requires a GitHub token (set localStorage key 'arcs-github-token').";
+          el.status.classList.add("error");
+          setTimeout(() => {
+            if (el.status && String(el.status.textContent || "").startsWith("Last changed requires a GitHub token")) {
+              el.status.textContent = "";
+              el.status.classList.remove("error");
+            }
+          }, 5000);
+        }
+      }
       render();
     });
   }
