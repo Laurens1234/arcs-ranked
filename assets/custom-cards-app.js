@@ -818,7 +818,7 @@ function draftCards() {
   const source = getFilteredCards({ ignoreDraft: true });
   if (source.length === 0) return;
 
-  const raw = prompt("Draft how many cards?", "10");
+  const raw = prompt("Draft how many cards?", "4");
   if (raw === null) return;
   const n = parseInt(String(raw).trim(), 10);
 
