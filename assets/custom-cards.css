@@ -193,6 +193,43 @@ html {
 }
 
 /* Custom Cards: mobile grid should fill width (many controls above can make the grid feel cramped) */
+@media (max-width: 1200px) {
+  /* Stack tabs + controls sooner so nothing overflows off-screen */
+  .nav .container {
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .tabs {
+    width: 100%;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+
+  .controls {
+    width: 100%;
+    flex-wrap: wrap;
+    justify-content: center;
+    overflow: visible;
+  }
+
+  .controls > * {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .search-group {
+    flex: 1 1 420px;
+    max-width: 100%;
+  }
+
+  .search-group .search {
+    width: 100%;
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+}
+
 @media (max-width: 640px) {
   .controls {
     max-width: 100%;

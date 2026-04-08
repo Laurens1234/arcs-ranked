@@ -106,6 +106,7 @@ const el = {
   sortSelect: document.getElementById("sortSelect"),
   resourceSelect: document.getElementById("resourceSelect"),
   setupSelect: document.getElementById("setupSelect"),
+  draftBtn: document.getElementById("draftBtn"),
   themeToggle: document.getElementById("themeToggle"),
   lightbox: document.getElementById("lightbox"),
   lightboxImg: document.getElementById("lightboxImg"),
@@ -121,6 +122,16 @@ let activeTab = "leaders";
 let selectMode = false;
 let selectedCards = new Set(); // stores card imageUrl as unique key
 let currentLightboxCard = null;
+let draftedCardImageUrls = null; // Set<string> of imageUrl
+
+function isDraftActive() {
+  return draftedCardImageUrls instanceof Set && draftedCardImageUrls.size > 0;
+}
+
+function updateDraftButton() {
+  if (!el.draftBtn) return;
+  el.draftBtn.textContent = isDraftActive() ? "✅ Done" : "Draft";
+}
 
 let leaderOrderByName = new Map(); // key: normalizeName(leaderName) -> number (1-based)
 let leaderAbilityCharsByName = new Map(); // key: normalizeName(leaderName) -> number (chars in ability names + text)
@@ -722,7 +733,7 @@ function updateSetupDropdownOptionsAndCounts() {
 }
 
 // ========== Rendering ==========
-function getFilteredCards() {
+function getFilteredCards({ ignoreDraft = false } = {}) {
   let cards = allCards;
 
   // Tab filter
@@ -779,10 +790,47 @@ function getFilteredCards() {
     }
   }
 
+  // Draft filter (applied after all other filtering/sorting)
+  if (!ignoreDraft && draftedCardImageUrls && draftedCardImageUrls.size > 0) {
+    cards = cards.filter((c) => draftedCardImageUrls.has(c.imageUrl));
+  }
+
   return cards;
 }
 
+function pickRandomSubset(items, n) {
+  const arr = [...items];
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr.slice(0, n);
+}
+
+function draftCards() {
+  // When draft mode is active, this button becomes "Done".
+  if (isDraftActive()) {
+    draftedCardImageUrls = null;
+    render();
+    return;
+  }
+
+  const source = getFilteredCards({ ignoreDraft: true });
+  if (source.length === 0) return;
+
+  const raw = prompt("Draft how many cards?", "10");
+  if (raw === null) return;
+  const n = parseInt(String(raw).trim(), 10);
+
+  if (!Number.isFinite(n) || n <= 0) return;
+  const take = Math.min(n, source.length);
+  const drafted = pickRandomSubset(source, take);
+  draftedCardImageUrls = new Set(drafted.map((c) => c.imageUrl));
+  render();
+}
+
 function render() {
+  updateDraftButton();
   updateResourceDropdownCounts();
   updateSetupDropdownOptionsAndCounts();
   const cards = getFilteredCards();
@@ -1087,6 +1135,9 @@ function init() {
   document.getElementById("selectBtn").addEventListener("click", toggleSelectMode);
   document.getElementById("selectAllBtn").addEventListener("click", selectAll);
   document.getElementById("deselectAllBtn").addEventListener("click", deselectAll);
+
+  // Draft
+  if (el.draftBtn) el.draftBtn.addEventListener("click", draftCards);
 
   // Tabs
   el.tabs.forEach((tab) => {
