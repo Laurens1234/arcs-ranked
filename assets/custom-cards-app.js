@@ -1049,60 +1049,192 @@ function printCards() {
   const container = document.getElementById("printContainer");
   container.innerHTML = "";
 
-  // Build explicit rows so adjacent cards can share a single cut line (no doubled borders).
-  // Assumes A4 with @page horizontal margins totaling 10mm (see CSS): usable width ≈ 200mm.
-  const PAGE_CONTENT_WIDTH_MM = 200;
+  // Layout math for printing (must stay consistent with @page in CSS)
+  // A4 = 210×297mm.
+  // CSS uses @page margin: 10mm top, 8mm left/right/bottom → content area = 194×279mm.
+  // CSS adds .print-container padding: 4mm left/right (horizontal).
+  // CSS adds .print-page padding: 12mm top + 4mm bottom (vertical).
+  // Usable area per page = 186×263mm.
+  const PAGE_CONTENT_WIDTH_MM = 186;
+  const PAGE_CONTENT_HEIGHT_MM = 263;
+
+  const backImageUrl = "https://raw.githubusercontent.com/Laurens1234/Arcs-Leader-Generator/refs/heads/main/cardAssets/CardAssets-Tarot-Leader-No-Bleed.png";
+
   const widthMmForCard = (card) => (card.type === "Lore" ? 63 : 70);
+  const heightMmForCard = (card) => (card.type === "Lore" ? 88 : 120);
 
-  /** @type {Array<Array<any>>} */
-  const rows = [];
-  let currentRow = [];
-  let currentWidth = 0;
+  function buildRows(cardList) {
+    /** @type {Array<Array<any>>} */
+    const rows = [];
+    let currentRow = [];
+    let currentWidth = 0;
 
-  for (const card of cards) {
-    const w = widthMmForCard(card);
-    if (currentRow.length > 0 && currentWidth + w > PAGE_CONTENT_WIDTH_MM) {
-      rows.push(currentRow);
-      currentRow = [];
-      currentWidth = 0;
+    for (const card of cardList) {
+      const w = widthMmForCard(card);
+      // Don't mix card sizes in the same row; shared cut lines won't align otherwise.
+      if (currentRow.length > 0 && currentRow[0]?.type !== card.type) {
+        rows.push(currentRow);
+        currentRow = [];
+        currentWidth = 0;
+      }
+      if (currentRow.length > 0 && currentWidth + w > PAGE_CONTENT_WIDTH_MM) {
+        rows.push(currentRow);
+        currentRow = [];
+        currentWidth = 0;
+      }
+      currentRow.push(card);
+      currentWidth += w;
     }
-    currentRow.push(card);
-    currentWidth += w;
+    if (currentRow.length > 0) rows.push(currentRow);
+    return rows;
   }
-  if (currentRow.length > 0) rows.push(currentRow);
 
-  const promises = [];
-  rows.forEach((rowCards, rowIndex) => {
-    const rowEl = document.createElement("div");
-    rowEl.className = "print-row";
+  function paginateRows(rows) {
+    /** @type {Array<Array<Array<any>>>} */
+    const pages = [];
+    let currentPage = [];
+    let currentHeight = 0;
 
-    rowCards.forEach((card, colIndex) => {
-      const div = document.createElement("div");
-      const isLeader = card.type !== "Lore";
-      const isEndOfRow = colIndex === rowCards.length - 1;
-      const isLastRow = rowIndex === rows.length - 1;
-      div.className = [
-        "print-card",
-        isLeader ? "print-card-leader" : "print-card-lore",
-        isEndOfRow ? "cut-right" : "",
-        isLastRow ? "cut-bottom" : "",
-      ].filter(Boolean).join(" ");
+    for (const row of rows) {
+      const rowHeight = row.reduce((m, c) => Math.max(m, heightMmForCard(c)), 0);
+      if (currentPage.length > 0 && currentHeight + rowHeight > PAGE_CONTENT_HEIGHT_MM) {
+        pages.push(currentPage);
+        currentPage = [];
+        currentHeight = 0;
+      }
+      currentPage.push(row);
+      currentHeight += rowHeight;
+    }
+    if (currentPage.length > 0) pages.push(currentPage);
+    return pages;
+  }
 
-      const img = document.createElement("img");
-      img.src = card.imageUrl;
-      img.alt = card.name;
+  function renderPages(pages, { imageUrlForCard, altForCard, pageNumberStart, totalPages }) {
+    const promises = [];
 
-      promises.push(new Promise((resolve) => {
-        img.onload = resolve;
-        img.onerror = resolve; // don't block on broken images
-      }));
+    pages.forEach((pageRows, pageIndex) => {
+      const pageEl = document.createElement("div");
+      pageEl.className = "print-page";
 
-      div.appendChild(img);
-      rowEl.appendChild(div);
+      if (Number.isFinite(pageNumberStart) && Number.isFinite(totalPages) && totalPages > 0) {
+        const numEl = document.createElement("div");
+        numEl.className = "page-number";
+        numEl.textContent = `Page ${pageNumberStart + pageIndex}/${totalPages}`;
+        pageEl.appendChild(numEl);
+      }
+
+      pageRows.forEach((rowCards, rowIndexInPage) => {
+        const rowEl = document.createElement("div");
+        rowEl.className = "print-row";
+        const isFirstRowOfPage = rowIndexInPage === 0;
+        const isLastRowOfPage = rowIndexInPage === pageRows.length - 1;
+
+        rowCards.forEach((card, colIndex) => {
+          const div = document.createElement("div");
+          const isLeader = card.type !== "Lore";
+          const isFirstCol = colIndex === 0;
+          const isLastCol = colIndex === rowCards.length - 1;
+
+          div.className = [
+            "print-card",
+            isLeader ? "print-card-leader" : "print-card-lore",
+            isFirstCol ? "cut-left" : "",
+            isFirstRowOfPage ? "cut-top" : "",
+            isLastCol ? "cut-right" : "",
+            isLastRowOfPage ? "cut-bottom" : "",
+          ].filter(Boolean).join(" ");
+
+          // Crop marks: extend cut lines slightly into page margins.
+          // These are only meaningful on the outer page perimeter.
+          function addMark(className) {
+            const m = document.createElement("span");
+            m.className = `crop-mark ${className}`;
+            div.appendChild(m);
+          }
+
+          if (isFirstRowOfPage) {
+            // Vertical marks above: one for every vertical cut line.
+            // Vertical cut lines are drawn on the LEFT edge of each card (and on the RIGHT edge only for the last column).
+            addMark("crop-v-left-top");
+            if (isLastCol) addMark("crop-v-right-top");
+
+            // Horizontal marks on the top edge: only at left/right margins.
+            if (isFirstCol) addMark("crop-h-left-top");
+            if (isLastCol) addMark("crop-h-right-top");
+          }
+
+          // Horizontal marks at the bottom edge: mark each row boundary at left/right margins.
+          if (isFirstCol) addMark("crop-h-left-bottom");
+          if (isLastCol) addMark("crop-h-right-bottom");
+
+          if (isLastRowOfPage) {
+            // Vertical marks below: one for every vertical cut line.
+            addMark("crop-v-left-bottom");
+            if (isLastCol) addMark("crop-v-right-bottom");
+          }
+
+          const img = document.createElement("img");
+          img.src = imageUrlForCard(card);
+          img.alt = altForCard(card);
+
+          promises.push(new Promise((resolve) => {
+            img.onload = resolve;
+            img.onerror = resolve;
+          }));
+
+          div.appendChild(img);
+          rowEl.appendChild(div);
+        });
+
+        pageEl.appendChild(rowEl);
+      });
+
+      // Ensure page boundaries are deterministic when printing.
+      if (pageIndex < pages.length - 1) pageEl.classList.add("break-after");
+      container.appendChild(pageEl);
     });
 
-    container.appendChild(rowEl);
+    return promises;
+  }
+
+  // 1) Render fronts
+  const frontRows = buildRows(cards);
+  const frontPages = paginateRows(frontRows);
+  const leaderCount = cards.filter((c) => c.type !== "Lore").length;
+
+  /** @type {Array<Array<Array<any>>>} */
+  let backPages = [];
+  if (leaderCount > 0) {
+    // Create placeholder "cards" so we can reuse the same layout logic.
+    const backCards = Array.from({ length: leaderCount }, () => ({
+      type: "Leader",
+      imageUrl: backImageUrl,
+      name: "Leader back",
+    }));
+    backPages = paginateRows(buildRows(backCards));
+  }
+
+  const totalPages = frontPages.length + backPages.length;
+
+  const promises = renderPages(frontPages, {
+    imageUrlForCard: (card) => card.imageUrl,
+    altForCard: (card) => card.name,
+    pageNumberStart: 1,
+    totalPages,
   });
+
+  // 2) Render leader backs at the end (one or more pages, depending on how many leaders are printed)
+  if (backPages.length > 0) {
+    const breakEl = document.createElement("div");
+    breakEl.className = "print-page-break";
+    container.appendChild(breakEl);
+    promises.push(...renderPages(backPages, {
+      imageUrlForCard: (card) => card.imageUrl,
+      altForCard: (card) => card.name,
+      pageNumberStart: 1 + frontPages.length,
+      totalPages,
+    }));
+  }
 
   Promise.all(promises).then(() => {
     window.print();
