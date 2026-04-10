@@ -54,14 +54,17 @@
     <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
       .home-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: center;
         gap: 32px;
         padding: 60px 0 80px;
       }
 
       .home-card {
         position: relative;
+        flex: 1 1 320px;
+        width: 100%;
         background: var(--bg-card);
         border: 1px solid var(--border);
         border-radius: var(--radius);
@@ -73,6 +76,12 @@
                     box-shadow 0.3s cubic-bezier(0.4, 0, 0.2, 1);
         box-shadow: var(--shadow-card);
         animation: fadeInUp 0.5s ease-out backwards;
+      }
+
+      @media (min-width: 720px) {
+        .home-card {
+          max-width: 440px;
+        }
       }
 
       .home-card:nth-child(2) {
