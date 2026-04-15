@@ -4,8 +4,15 @@ const REPO_NAME = "Arcs-Leader-Generator";
 const BRANCH = "main";
 const LEADERS_PATH = "results";
 const LORE_PATH = "results/lore";
+const COURT_PATHS = ["results/guild", "results/vox"];
 
 const RAW_BASE = `https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/${BRANCH}`;
+
+// Optional Beyond-the-Reach grid images (Dropbox raw links)
+// Primary grid (4x4) — previously used and trimmed to 12 tiles
+const BTR_GRID_SOURCE = "https://dl.dropboxusercontent.com/scl/fi/f90dkvix8gwsyqngsl0ga/BtR-Kit-3-TTS.jpg?rlkey=nxwju5lb5h8i3kem444uayq8f&dl=0";
+// Additional grid (7x4) — user-provided; will be cropped as 7 wide × 4 high and appended
+const BTR_GRID_SOURCE_2 = "https://dl.dropboxusercontent.com/scl/fi/3ehcaq6b3qowq4auhqw3z/BtR-Kit-3-TTS2.jpg?rlkey=ucxueg8duylpua40cdrndlnbk&dl=0";
 
 // ======= Beyond the Reach ========
 // Names of leaders to show when the "beyond" tab is active
@@ -31,6 +38,61 @@ function normalizeName(n) {
   // collapse multiple spaces
   s = s.replace(/\s+/g, " ").trim();
   return s;
+}
+
+// ----- Beyond-the-Reach grid loader -----
+function normalizeDropboxDlUrl(url) {
+  try {
+    const u = new URL(url);
+    // Ensure dl=1
+    if (u.searchParams.has('dl')) u.searchParams.set('dl', '1');
+    else u.searchParams.set('dl', '1');
+    return u.toString();
+  } catch (e) {
+    // Fallback: append dl=1
+    return url + (url.includes('?') ? '&dl=1' : '?dl=1');
+  }
+}
+
+// Generic loader: download a Dropbox image, crop into cols x rows, return array of tiles
+async function loadBtrGrid(sourceUrl, cols = 4, rows = 4) {
+  const source = normalizeDropboxDlUrl(sourceUrl);
+  try {
+    const res = await fetch(source);
+    if (!res.ok) throw new Error('BTR grid fetch failed ' + res.status);
+    const blob = await res.blob();
+
+    const imgBitmap = await createImageBitmap(blob);
+    const tileW = Math.floor(imgBitmap.width / cols);
+    const tileH = Math.floor(imgBitmap.height / rows);
+
+    const tiles = [];
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        try {
+          const tileBitmap = await createImageBitmap(imgBitmap, c * tileW, r * tileH, tileW, tileH);
+          const canvas = document.createElement('canvas');
+          canvas.width = tileW;
+          canvas.height = tileH;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(tileBitmap, 0, 0);
+
+          const tileBlob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
+          const url = URL.createObjectURL(tileBlob);
+          const idx = r * cols + c + 1;
+          const name = `BtR ${idx}`;
+          tiles.push({ name, type: 'Leader', imageUrl: url, filename: `${name.replace(/\s+/g, '_')}.png` });
+        } catch (e) {
+          console.warn('Failed to create tile', r, c, e);
+        }
+      }
+    }
+
+    return tiles;
+  } catch (err) {
+    console.error('Error loading BtR grid image:', err);
+    throw err;
+  }
 }
 
 // ========== URL Sync ==========
@@ -102,6 +164,7 @@ const el = {
   cardGrid: document.getElementById("cardGrid"),
   query: document.getElementById("query"),
   searchModeSelect: document.getElementById("searchModeSelect"),
+  blightedNotice: document.getElementById("blightedNotice"),
   tabs: document.querySelectorAll(".tab"),
   sortSelect: document.getElementById("sortSelect"),
   resourceSelect: document.getElementById("resourceSelect"),
@@ -118,6 +181,8 @@ const el = {
 
 // ========== State ==========
 let allCards = [];
+let courtCards = [];
+let btrGridCards = [];
 let activeTab = "leaders";
 let selectMode = false;
 let selectedCards = new Set(); // stores card imageUrl as unique key
@@ -189,9 +254,11 @@ async function loadCards() {
       render();
     });
 
-    const [leaderFiles, loreFiles] = await Promise.all([
+    const [leaderFiles, loreFiles, guildFiles, voxFiles] = await Promise.all([
       fetchGitHubDir(LEADERS_PATH),
       fetchGitHubDir(LORE_PATH),
+      fetchGitHubDir(COURT_PATHS[0]),
+      fetchGitHubDir(COURT_PATHS[1]),
     ]);
 
     const leaders = leaderFiles
@@ -216,19 +283,91 @@ async function loadCards() {
       a.name.localeCompare(b.name)
     );
 
+    // Build court deck (guild + vox)
+    const guild = Array.isArray(guildFiles) ? guildFiles
+      .filter((f) => f.type === "file" && f.name.toLowerCase().endsWith(".png"))
+      .map((f) => ({
+        name: nameFromFile(f.name, "Leader"),
+        type: "Leader",
+        filename: f.name,
+        imageUrl: `${RAW_BASE}/${COURT_PATHS[0]}/${encodeURIComponent(f.name)}`,
+      })) : [];
+
+    const vox = Array.isArray(voxFiles) ? voxFiles
+      .filter((f) => f.type === "file" && f.name.toLowerCase().endsWith(".png"))
+      .map((f) => ({
+        name: nameFromFile(f.name, "Leader"),
+        type: "Leader",
+        filename: f.name,
+        imageUrl: `${RAW_BASE}/${COURT_PATHS[1]}/${encodeURIComponent(f.name)}`,
+      })) : [];
+
+    courtCards = [...guild, ...vox].sort((a, b) => a.name.localeCompare(b.name));
+
+    // Kick off loading of the Beyond-the-Reach grid images.
+    // 1) Primary 4x4 grid — trim to first 12 tiles
+    loadBtrGrid(BTR_GRID_SOURCE, 4, 4)
+      .then((tiles) => {
+        if (!tiles || tiles.length === 0) return;
+        const kept = tiles.slice(0, 12).map((t, i) => ({
+          ...t,
+          name: `BtR ${i + 1}`,
+          filename: `BtR_${i + 1}.png`,
+        }));
+        btrGridCards = kept;
+        if (activeTab === 'beyond') render();
+
+        // 2) Then load the additional 7x4 grid and append its tiles
+        return loadBtrGrid(BTR_GRID_SOURCE_2, 7, 4).then((more) => {
+          if (!more || more.length === 0) return;
+          const start = btrGridCards.length || 0;
+          const mapped = more.map((t, i) => ({
+            ...t,
+            name: `BtR ${start + i + 1}`,
+            filename: `BtR_${start + i + 1}.png`,
+          }));
+          btrGridCards = [...btrGridCards, ...mapped];
+          if (activeTab === 'beyond') render();
+        }).catch((e) => {
+          console.warn('Failed to load secondary BtR grid image:', e);
+        });
+      })
+      .catch((e) => {
+        console.warn("Failed to load primary BtR grid image:", e);
+        // Attempt secondary grid even if primary fails
+        loadBtrGrid(BTR_GRID_SOURCE_2, 7, 4)
+          .then((more) => {
+            if (!more || more.length === 0) return;
+            const mapped = more.map((t, i) => ({
+              ...t,
+              name: `BtR ${i + 1}`,
+              filename: `BtR_${i + 1}.png`,
+            }));
+            btrGridCards = mapped;
+            if (activeTab === 'beyond') render();
+          })
+          .catch((e2) => console.warn('Failed to load secondary BtR grid image:', e2));
+      });
+
     el.status.textContent = "";
     render();
 
     // If the URL has a card hash, open it (and switch to a sensible tab).
     const cardFromUrl = getUrlCardName();
     if (cardFromUrl) {
-      const target = allCards.find((c) => normalizeName(c.name) === normalizeName(cardFromUrl));
-      if (target) {
+      let target = allCards.find((c) => normalizeName(c.name) === normalizeName(cardFromUrl));
+      if (!target) {
+        target = courtCards.find((c) => normalizeName(c.name) === normalizeName(cardFromUrl));
+        if (target) activeTab = "court";
+      } else {
         if (target.type === "Leader") {
           activeTab = BEYOND_SET.has(normalizeName(target.name)) ? "beyond" : "leaders";
         } else if (target.type === "Lore") {
           activeTab = "lore";
         }
+      }
+
+      if (target) {
         el.tabs.forEach((t) => t.classList.toggle("active", t.dataset.tab === activeTab));
         setUrlTab(activeTab);
         updateSortControlVisibility();
@@ -593,7 +732,7 @@ function cardMatchesQuery(card, qLower, searchMode) {
 
 function updateSortControlVisibility() {
   if (!el.sortSelect) return;
-  const show = activeTab === "leaders" || activeTab === "beyond";
+  const show = activeTab === "leaders";
   el.sortSelect.style.display = show ? "" : "none";
   if (el.resourceSelect) el.resourceSelect.style.display = show ? "" : "none";
   if (el.setupSelect) el.setupSelect.style.display = show ? "" : "none";
@@ -669,10 +808,6 @@ function getLeaderBaseCardsForCounts() {
     cards = cards.filter(
       (c) => c.type === "Leader" && !BEYOND_SET.has(normalizeName(c.name))
     );
-  } else if (activeTab === "beyond") {
-    cards = cards.filter(
-      (c) => c.type === "Leader" && BEYOND_SET.has(normalizeName(c.name))
-    );
   } else {
     return [];
   }
@@ -688,7 +823,7 @@ function getLeaderBaseCardsForCounts() {
 
 function updateResourceDropdownCounts() {
   if (!el.resourceSelect) return;
-  if (activeTab !== "leaders" && activeTab !== "beyond") return;
+  if (activeTab !== "leaders") return;
 
   // Counts should respect the other filter (setup), but not this resource filter.
   const baseCards = filterLeaderCardsBySetup(getLeaderBaseCardsForCounts(), getLeaderSetupFilter());
@@ -777,7 +912,7 @@ function formatSetupFootprintLabel(setupKey) {
 
 function updateSetupDropdownOptionsAndCounts() {
   if (!el.setupSelect) return;
-  if (activeTab !== "leaders" && activeTab !== "beyond") return;
+  if (activeTab !== "leaders") return;
 
   const selected = getLeaderSetupFilter();
 
@@ -823,19 +958,19 @@ function updateSetupDropdownOptionsAndCounts() {
 
 // ========== Rendering ==========
 function getFilteredCards({ ignoreDraft = false } = {}) {
-  let cards = allCards;
+  // Base set: use courtCards if the court tab is active, otherwise use allCards
+  let cards = activeTab === "court" ? courtCards : allCards;
 
-  // Tab filter
+  // Tab filter for non-court tabs
   if (activeTab === "leaders") {
     // Regular leaders tab should NOT include the Beyond the Reach leader set
-    cards = cards.filter(
-      (c) => c.type === "Leader" && !BEYOND_SET.has(normalizeName(c.name))
-    );
+    cards = cards.filter((c) => c.type === "Leader" && !BEYOND_SET.has(normalizeName(c.name)));
   } else if (activeTab === "lore") {
     cards = cards.filter((c) => c.type === "Lore");
   } else if (activeTab === "beyond") {
-    // Show only the specified leaders for the "Beyond the Reach" tab
-    cards = cards.filter((c) => c.type === "Leader" && BEYOND_SET.has(normalizeName(c.name)));
+    // Always use the cropped Dropbox grid tiles for the Beyond tab.
+    // Do not fall back to any repository-hosted leader images.
+    cards = btrGridCards && btrGridCards.length > 0 ? btrGridCards.slice() : [];
   }
 
   // Filters (leader tabs only)
@@ -850,7 +985,6 @@ function getFilteredCards({ ignoreDraft = false } = {}) {
   if (q) {
     cards = cards.filter((c) => cardMatchesQuery(c, q, mode));
   }
-
   // Sorting (leaders tab only)
   if (activeTab === "leaders") {
     const sortMode = getLeaderSortMode();
@@ -922,7 +1056,23 @@ function render() {
   updateDraftButton();
   updateResourceDropdownCounts();
   updateSetupDropdownOptionsAndCounts();
+  // Show Blighted Reach Dropbox link when beyond tab is active
+    if (el.blightedNotice) {
+    if (activeTab === "beyond") {
+      el.blightedNotice.style.display = "";
+      el.blightedNotice.innerHTML = `Current Blighted Reach cards are on Dropbox: <a class="workshop-leader-link" href="https://www.dropbox.com/scl/fo/ps7g0q2i0fjvb9nyn1d57/AIEcIcoquF_a4QhsMOKXT1Y?rlkey=mzs2y34buf3wcoyrqxylv66k7&e=4&st=8tws1gwn&dl=0" target="_blank" rel="noopener noreferrer">view them here ↗</a>.`;
+    } else {
+      el.blightedNotice.style.display = "none";
+      el.blightedNotice.innerHTML = "";
+    }
+  }
   const cards = getFilteredCards();
+
+  // Special case: if Beyond tab is active but tiles aren't ready yet, show a clear message.
+  if (activeTab === 'beyond' && (!btrGridCards || btrGridCards.length === 0)) {
+    el.cardGrid.innerHTML = `<p class="status">Loading Beyond the Reach images… (or none available)</p>`;
+    return;
+  }
 
   if (cards.length === 0 && allCards.length > 0) {
     el.cardGrid.innerHTML = `<p class="status">No cards match your search.</p>`;
@@ -1365,6 +1515,7 @@ async function downloadImages() {
         lore: "lore.zip",
         all: "all_cards.zip",
         beyond: "beyond-the-reach.zip",
+        court: "court_deck.zip",
       };
       return map[tab] || `${(tab || 'cards').replace(/\s+/g, '_')}.zip`;
     }
@@ -1415,7 +1566,7 @@ function init() {
 
   // Read tab from URL if present and valid
   const initialUrlTab = getUrlTab();
-  const validTabs = ["leaders", "lore", "all", "beyond"];
+  const validTabs = ["leaders", "lore", "court", "all", "beyond"];
   if (initialUrlTab && validTabs.includes(initialUrlTab)) {
     activeTab = initialUrlTab;
     // update active class on tab buttons

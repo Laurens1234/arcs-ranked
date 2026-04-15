@@ -11,6 +11,12 @@ html {
   text-underline-offset: 2px;
 }
 
+/* Ensure Blighted Reach notice links use the site accent color */
+.blighted-notice a,
+.blighted-notice a.workshop-leader-link {
+  color: var(--accent);
+}
+
 /* Search: mode "button" attached to the input */
 .search-group {
   display: flex;
