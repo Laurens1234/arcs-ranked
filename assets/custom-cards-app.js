@@ -105,7 +105,6 @@ const el = {
   tabs: document.querySelectorAll(".tab"),
   sortSelect: document.getElementById("sortSelect"),
   resourceSelect: document.getElementById("resourceSelect"),
-  resourceSelectB: document.getElementById("resourceSelectB"),
   setupSelect: document.getElementById("setupSelect"),
   draftBtn: document.getElementById("draftBtn"),
   themeToggle: document.getElementById("themeToggle"),
@@ -552,15 +551,8 @@ function getLeaderSortMode() {
 }
 
 function getLeaderResourceFilter() {
-  const aVal = el.resourceSelect?.value || "any";
-  const bVal = el.resourceSelectB?.value || "any";
-  // If the primary select encodes a combo like 'X|Y', prefer that.
-  if (typeof aVal === 'string' && aVal.includes('|')) return aVal;
-  // If primary select has a non-'any' value (including 'twoSame'), use it.
-  if (aVal && aVal !== 'any') return aVal;
-  // Otherwise, if secondary select is present and specifies something other than 'any', use pair form.
-  if (el.resourceSelectB && bVal && bVal !== 'any') return { a: aVal, b: bVal };
-  return aVal;
+  // Primary single-select now encodes singles and combos; just return its value.
+  return el.resourceSelect?.value || "any";
 }
 
 function getLeaderSetupFilter() {
@@ -604,7 +596,6 @@ function updateSortControlVisibility() {
   const show = activeTab === "leaders" || activeTab === "beyond";
   el.sortSelect.style.display = show ? "" : "none";
   if (el.resourceSelect) el.resourceSelect.style.display = show ? "" : "none";
-  if (el.resourceSelectB) el.resourceSelectB.style.display = show ? "" : "none";
   if (el.setupSelect) el.setupSelect.style.display = show ? "" : "none";
 }
 
@@ -774,17 +765,7 @@ function updateResourceDropdownCounts() {
   const still = [...el.resourceSelect.options].some(o => o.value === prev);
   el.resourceSelect.value = still ? prev : 'any';
 
-  // Mirror singles into secondary select (Any, None, singles sorted by count)
-  if (el.resourceSelectB) {
-    const selB = el.resourceSelectB.value;
-    const anyText = `Any (${total})`;
-    const anyHtml = `<option value="any">${anyText}</option>`;
-    const noneHtml = `<option value="none">None</option>`;
-    const resourcesHtml = singlesArr.map(([r, cnt]) => `<option value="${r}">${r} (${cnt})</option>`).join('');
-    el.resourceSelectB.innerHTML = anyHtml + noneHtml + resourcesHtml;
-    const stillExists = [...el.resourceSelectB.options].some((o) => o.value === selB);
-    el.resourceSelectB.value = stillExists ? selB : "any";
-  }
+  // No secondary select — single select contains singles and combos only.
 }
 
 function formatSetupFootprintLabel(setupKey) {
@@ -1456,11 +1437,7 @@ function init() {
       render();
     });
   }
-  if (el.resourceSelectB) {
-    el.resourceSelectB.addEventListener("change", () => {
-      render();
-    });
-  }
+  // single resource select only; combos handled by primary select
 
   // Setup filter
   if (el.setupSelect) {
