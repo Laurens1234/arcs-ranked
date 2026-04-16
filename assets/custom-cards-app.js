@@ -107,6 +107,8 @@ const el = {
   sortSelect: document.getElementById("sortSelect"),
   resourceSelect: document.getElementById("resourceSelect"),
   setupSelect: document.getElementById("setupSelect"),
+  courtTypeSelect: document.getElementById("courtTypeSelect"),
+  courtResourceSelect: document.getElementById("courtResourceSelect"),
   draftBtn: document.getElementById("draftBtn"),
   themeToggle: document.getElementById("themeToggle"),
   lightbox: document.getElementById("lightbox"),
@@ -257,6 +259,8 @@ async function loadCards() {
         type: "Lore",
         filename: found.filename,
         imageUrl: found.url,
+        // Use `body` (if present) as the abilities text for lore cards so the lightbox shows it
+        abilities: p.body || p.abilities || "",
       };
     });
     const lore = await Promise.all(lorePromises);
@@ -270,6 +274,10 @@ async function loadCards() {
         type: "Guild",
         filename: found.filename,
         imageUrl: found.url,
+        abilities: p.body || p.abilities || "",
+        resources: Array.isArray(p.resources)
+          ? p.resources.map(r => stripMarkdownForCharCount(String(r)).toLowerCase()).filter(Boolean)
+          : (p.resources ? [stripMarkdownForCharCount(String(p.resources)).toLowerCase()] : []),
       };
     });
 
@@ -280,6 +288,10 @@ async function loadCards() {
         type: "Vox",
         filename: found.filename,
         imageUrl: found.url,
+        abilities: p.body || p.abilities || "",
+        resources: Array.isArray(p.resources)
+          ? p.resources.map(r => stripMarkdownForCharCount(String(r)).toLowerCase()).filter(Boolean)
+          : (p.resources ? [stripMarkdownForCharCount(String(p.resources)).toLowerCase()] : []),
       };
     });
 
@@ -483,9 +495,17 @@ function parseYamlList(yaml) {
       const name = String(doc.name || '').trim();
       const key = normalizeName(name);
       const abilities = doc.abilities != null ? String(doc.abilities).replace(/\r/g, '').trim() : '';
-      const resources = Array.isArray(doc.resources)
-        ? doc.resources.map(r => stripMarkdownForCharCount(String(r))).filter(Boolean)
-        : (doc.resources ? [stripMarkdownForCharCount(String(doc.resources))] : []);
+      // Support both `resources:` (array) and `resource:` (single value) keys in YAML
+      let resources = [];
+      if (Array.isArray(doc.resources)) {
+        resources = doc.resources.map(r => stripMarkdownForCharCount(String(r))).filter(Boolean);
+      } else if (doc.resources) {
+        resources = [stripMarkdownForCharCount(String(doc.resources))];
+      } else if (Array.isArray(doc.resource)) {
+        resources = doc.resource.map(r => stripMarkdownForCharCount(String(r))).filter(Boolean);
+      } else if (doc.resource) {
+        resources = [stripMarkdownForCharCount(String(doc.resource))];
+      }
 
       let setupKey = '';
       const s = doc.setup || {};
@@ -650,6 +670,8 @@ function updateSortControlVisibility() {
   el.sortSelect.style.display = show ? "" : "none";
   if (el.resourceSelect) el.resourceSelect.style.display = show ? "" : "none";
   if (el.setupSelect) el.setupSelect.style.display = show ? "" : "none";
+  if (el.courtTypeSelect) el.courtTypeSelect.style.display = activeTab === "court" ? "" : "none";
+  if (el.courtResourceSelect) el.courtResourceSelect.style.display = activeTab === "court" ? "" : "none";
 }
 
 function filterLeaderCardsByResource(cards, resourceFilter) {
@@ -731,6 +753,21 @@ function getLeaderBaseCardsForCounts() {
     cards = cards.filter((c) => cardMatchesQuery(c, q, mode));
   }
 
+  return cards;
+}
+
+function getCourtBaseCardsForCounts() {
+  if (activeTab !== 'court') return [];
+  // Start from courtCards, but respect search and courtType selection
+  let cards = courtCards.slice();
+  const q = (el.query.value || '').trim().toLowerCase();
+  const mode = getSearchMode();
+  if (q) cards = cards.filter((c) => cardMatchesQuery(c, q, mode));
+  // apply courtType filter for counts
+  if (el.courtTypeSelect) {
+    const t = (el.courtTypeSelect.value || 'any').trim();
+    if (t && t !== 'any') cards = cards.filter(c => String(c.type||'').toLowerCase() === String(t).toLowerCase());
+  }
   return cards;
 }
 
@@ -816,6 +853,39 @@ function updateResourceDropdownCounts() {
   // No secondary select — single select contains singles and combos only.
 }
 
+function updateCourtResourceDropdownCounts() {
+  if (!el.courtResourceSelect) return;
+  if (activeTab !== 'court') return;
+
+  const base = getCourtBaseCardsForCounts();
+  // We only care about Guild resources (cards of type Guild)
+  const guildCards = base.filter(c => String(c.type||'').toLowerCase() === 'guild');
+
+  const counts = new Map();
+  for (const c of guildCards) {
+    const list = Array.isArray(c.resources) ? c.resources.map(x => String(x)) : [];
+    for (const r of list) {
+      const key = r || 'None';
+      counts.set(key, (counts.get(key) || 0) + 1);
+    }
+  }
+
+  // Build options: Any + sorted resources by count desc
+  const total = guildCards.length;
+  const prev = el.courtResourceSelect.value;
+  const anyHtml = `<option value="any">Any Resource (${total})</option>`;
+  const items = [...counts.entries()].filter(([k]) => k && String(k).toLowerCase() !== 'none');
+  items.sort((a,b) => b[1]-a[1] || String(a[0]).localeCompare(String(b[0])));
+  const optsHtml = items.map(([r,cnt]) => {
+    const key = String(r).toLowerCase();
+    const label = String(r).split(/\s+/).map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+    return `<option value="${escapeHtml(key)}">${escapeHtml(label)} (${cnt})</option>`;
+  }).join('');
+  el.courtResourceSelect.innerHTML = anyHtml + optsHtml;
+  const still = [...el.courtResourceSelect.options].some(o => o.value === prev);
+  el.courtResourceSelect.value = still ? prev : 'any';
+}
+
 function formatSetupFootprintLabel(setupKey) {
   // setupKey is "shipsPattern|buildingsPattern".
   const [ships, buildings] = String(setupKey).split("|");
@@ -886,6 +956,26 @@ function getFilteredCards({ ignoreDraft = false } = {}) {
   if (activeTab === "leaders") {
     cards = filterLeaderCardsByResource(cards, getLeaderResourceFilter());
     cards = filterLeaderCardsBySetup(cards, getLeaderSetupFilter());
+  }
+
+  // Court type filter (court tab only)
+  if (activeTab === "court" && el.courtTypeSelect) {
+    const t = (el.courtTypeSelect.value || "any").trim();
+    if (t && t !== "any") {
+      cards = cards.filter((c) => String(c.type || "").toLowerCase() === String(t).toLowerCase());
+    }
+  }
+
+  // Court resource filter: only applies to Guild cards
+  if (activeTab === "court" && el.courtResourceSelect) {
+    const r = (el.courtResourceSelect.value || "any").trim();
+    if (r && r !== "any") {
+      cards = cards.filter((c) => {
+        if (String(c.type || '').toLowerCase() !== 'guild') return false;
+        const res = Array.isArray(c.resources) ? c.resources.map(x => String(x)) : [];
+        return res.some(x => String(x).toLowerCase() === String(r).toLowerCase());
+      });
+    }
   }
 
   // Search filter
@@ -965,6 +1055,7 @@ function render() {
   updateDraftButton();
   updateResourceDropdownCounts();
   updateSetupDropdownOptionsAndCounts();
+  updateCourtResourceDropdownCounts();
   const cards = getFilteredCards();
 
   if (cards.length === 0 && allCards.length > 0) {
@@ -1066,6 +1157,29 @@ function updateLightboxDetails(card) {
   if (el.lightboxTitle) el.lightboxTitle.textContent = card.name || "";
 
   if (card.type !== "Leader") {
+    if (card.type === "Lore" || card.type === "Guild" || card.type === "Vox") {
+      // For lore cards, show the `body` as ability text
+      if (el.lightboxMeta) el.lightboxMeta.textContent = "";
+      const abilitiesText = card.abilities || "";
+      if (!el.lightboxAbilities) return;
+      if (!abilitiesText) {
+        el.lightboxAbilities.innerHTML = `<div class="lightbox-ability"><div class="lightbox-ability-body">No ability text found.</div></div>`;
+        return;
+      }
+      const sections = parseAbilitySections(abilitiesText);
+      if (sections.length === 0) {
+        el.lightboxAbilities.innerHTML = `<div class="lightbox-ability"><div class="lightbox-ability-body">No ability text found.</div></div>`;
+        return;
+      }
+      el.lightboxAbilities.innerHTML = sections
+        .map(({ name, body }) => {
+          const nameHtml = name ? `<div class="lightbox-ability-name">${escapeHtml(name)}</div>` : "";
+          const bodyHtml = renderInlineMarkdownToHtml(body).replace(/\n/g, "<br>");
+          return `<div class="lightbox-ability">${nameHtml}<div class="lightbox-ability-body">${bodyHtml}</div></div>`;
+        })
+        .join("");
+      return;
+    }
     if (el.lightboxMeta) el.lightboxMeta.textContent = "";
     if (el.lightboxAbilities) el.lightboxAbilities.innerHTML = "";
     return;
@@ -1486,6 +1600,20 @@ function init() {
   // Setup filter
   if (el.setupSelect) {
     el.setupSelect.addEventListener("change", () => {
+      render();
+    });
+  }
+
+  // Court type filter (Guild / Vox)
+  if (el.courtTypeSelect) {
+    el.courtTypeSelect.addEventListener("change", () => {
+      render();
+    });
+  }
+
+  // Court resource filter
+  if (el.courtResourceSelect) {
+    el.courtResourceSelect.addEventListener("change", () => {
       render();
     });
   }
