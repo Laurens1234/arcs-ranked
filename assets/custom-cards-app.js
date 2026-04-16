@@ -444,10 +444,21 @@ function computeAbilityCharCount(abilitiesCombinedText) {
     });
   }
 
+  // Helper: count visible chars, treating {icon:...}...{} as 1 char
+  function visibleCharCount(s) {
+    // Replace all {icon:...}...{} with a single char (greedy, so all nested/adjacent are replaced)
+    let replaced = String(s);
+    // Replace all {icon:...}...{} (including nested/adjacent) as 1 char each
+    replaced = replaced.replace(/\{icon:[^}]+\}[^{}]*?\{\}/g, "*");
+    // Remove any remaining {icon:...} (no closing {}) as 1 char
+    replaced = replaced.replace(/\{icon:[^}]+\}/g, "*");
+    replaced = stripMarkdownForCharCount(replaced);
+    return replaced.length;
+  }
+
   // If we can't detect headers, fall back to counting everything as text.
   if (matches.length === 0) {
-    const visible = stripMarkdownForCharCount(text);
-    return visible.length;
+    return visibleCharCount(text);
   }
 
   let total = 0;
@@ -456,8 +467,7 @@ function computeAbilityCharCount(abilitiesCombinedText) {
     const next = matches[i + 1];
     const rawName = stripMarkdownForCharCount(cur.name);
     const body = text.slice(cur.contentStart, next ? next.start : text.length);
-    const rawBody = stripMarkdownForCharCount(body);
-    total += rawName.length + rawBody.length;
+    total += rawName.length + visibleCharCount(body);
   }
   return total;
 }
@@ -465,126 +475,46 @@ function computeAbilityCharCount(abilitiesCombinedText) {
 // Parse a simple YAML list of card objects (used for leaders, lore, guild, vox)
 function parseYamlList(yaml) {
   if (!yaml) return [];
-  // Ensure splitting works for items at start of file
-  const text = yaml.startsWith('\n') ? yaml : '\n' + yaml;
-  const blocks = text.split(/\n-(?=\s*(?:name|image_name):)/g);
-  const items = [];
+  try {
+    const docs = jsyaml.load(yaml);
+    if (!Array.isArray(docs)) return [];
 
-  for (let i = 0; i < blocks.length; i++) {
-    let block = blocks[i];
-    if (!block || !block.trim()) continue;
-    // Remove any leading '-' or whitespace
-    block = block.replace(/^\s*-\s*/, '');
+    return docs.map((doc) => {
+      const name = String(doc.name || '').trim();
+      const key = normalizeName(name);
+      const abilities = doc.abilities != null ? String(doc.abilities).replace(/\r/g, '').trim() : '';
+      const resources = Array.isArray(doc.resources)
+        ? doc.resources.map(r => stripMarkdownForCharCount(String(r))).filter(Boolean)
+        : (doc.resources ? [stripMarkdownForCharCount(String(doc.resources))] : []);
 
-    // Name
-    const nameMatch = block.match(/name:\s*"?([^\n"]+)"?/m);
-    if (!nameMatch) continue;
-    const name = nameMatch[1].trim();
-    const key = normalizeName(name);
-
-    // Abilities: block scalar (|), quoted multi-line, or inline
-    let abilities = '';
-    const abilitiesBlockMatch = block.match(/abilities:\s*\|[\r\n]+((?:\s{2,}.*[\r\n]*)*)(?=(?:\n\s{2}[A-Za-z0-9_-]+:)|\n*$)/m);
-    if (abilitiesBlockMatch) {
-      // strip common indent (at least 2 spaces)
-      abilities = abilitiesBlockMatch[1].split(/\r?\n/).map(l => l.replace(/^\s{2}/, '')).join('\n').replace(/\r/g, '').trim();
-    } else {
-      const abilitiesQuotedMatch = block.match(/abilities:\s*(['"])([\s\S]*?)\1(?=(?:\n\s{2}[A-Za-z0-9_-]+:)|\n*$)/m);
-      if (abilitiesQuotedMatch) {
-        abilities = abilitiesQuotedMatch[2].replace(/\r/g, '').trim();
-      } else {
-        const abilitiesInlineMatch = block.match(/abilities:\s*([^\n\r]+)/m);
-        if (abilitiesInlineMatch) abilities = abilitiesInlineMatch[1].replace(/\r/g, '').trim();
+      let setupKey = '';
+      const s = doc.setup || {};
+      function bldChar(b) {
+        if (!b) return '-';
+        const bn = String(b).toLowerCase();
+        if (bn === 'city') return 'C';
+        if (bn === 'starport') return 'S';
+        return '-';
       }
-    }
-
-    // Resources: either a YAML list or inline array
-    let resources = [];
-    const resourcesListMatch = block.match(/resources:\s*\n((?:\s*-\s*[^\n]+\n?)*)/m);
-    if (resourcesListMatch && resourcesListMatch[1]) {
-      const lines = resourcesListMatch[1].split(/\r?\n/);
-      for (const ln of lines) {
-        const m = ln.match(/-\s*(.*)/);
-        if (m && m[1]) resources.push(stripMarkdownForCharCount(m[1].trim().replace(/['"]/g, '')));
-      }
-    } else {
-      const resourcesInlineMatch = block.match(/resources:\s*\[([^\]]*)\]/m);
-      if (resourcesInlineMatch && resourcesInlineMatch[1]) {
-        resources = resourcesInlineMatch[1].split(',').map(s => stripMarkdownForCharCount(s.replace(/['"]/g, '').trim())).filter(Boolean);
-      }
-    }
-
-    // Setup
-    let setupKey = '';
-    const setupMatch = block.match(/setup:\s*\n([\s\S]*?)(?=(?:\n\s{2}[A-Za-z0-9_-]+:)|\n*$)/m);
-    if (setupMatch) {
-      const setupText = setupMatch[1];
-      function readSlot(slot) {
-        const slotRe = new RegExp(`${slot}:\\s*\\n\\s*ships:\s*(\\d+)\\s*\\n\\s*building:\s*['\"]?([^'\"\\n]+)['\"]?`, 'm');
-        const m = setupText.match(slotRe);
-        if (!m) return null;
-        const ships = parseInt(m[1], 10);
-        const buildingRaw = stripMarkdownForCharCount(m[2]);
-        const building = (buildingRaw || '').toLowerCase();
-        return { ships: Number.isFinite(ships) ? ships : 0, building };
-      }
-      const a = readSlot('A');
-      const b = readSlot('B');
-      const c = readSlot('C');
-      if (a && b && c) {
-        const shipsPattern = `${a.ships}-${b.ships}-${c.ships}`;
-        function bldChar(bld) {
-          if (bld === 'city') return 'C';
-          if (bld === 'starport') return 'S';
-          return '-';
-        }
-        const buildingsPattern3 = `${bldChar(a.building)}${bldChar(b.building)}${bldChar(c.building)}`;
-        const buildingsPattern = buildingsPattern3.endsWith('-') ? buildingsPattern3.slice(0, -1) : buildingsPattern3;
+      if (s.A && s.B && s.C) {
+        const shipsPattern = `${Number(s.A.ships || 0)}-${Number(s.B.ships || 0)}-${Number(s.C.ships || 0)}`;
+        const buildingsPattern3 = `${bldChar(s.A.building)}${bldChar(s.B.building)}${bldChar(s.C.building)}`;
+        const buildingsPattern = buildingsPattern3.replace(/-+$/,'');
         setupKey = `${shipsPattern}|${buildingsPattern}`;
       }
-    }
 
-    // Capture other top-level scalar fields (title, body, variant, footer, etc.)
-    const extra = {};
-    // Find keys at top-level (lines indented 2 spaces)
-    const keyRe = /^\s{2}([A-Za-z0-9_-]+):/gm;
-    let km;
-    const keys = new Set();
-    while ((km = keyRe.exec(block)) !== null) {
-      keys.add(km[1]);
-    }
-
-    for (const k of keys) {
-      if (k === 'name' || k === 'abilities' || k === 'resources' || k === 'setup') continue;
-
-      // block scalar
-      const blockScalarRe = new RegExp(`${k}:\\s*\\|[\\r\\n]+((?:\\s{2,}.*[\\r\\n]*)*)(?=(?:\\n\\s{2}[A-Za-z0-9_-]+:)|\\n*$)`, 'm');
-      const bs = block.match(blockScalarRe);
-      if (bs) {
-        extra[k] = bs[1].split(/\\r?\\n/).map(l => l.replace(/^\\s{2}/, '')).join('\n').replace(/\\r/g, '').trim();
-        continue;
+      const extra = {};
+      for (const k of Object.keys(doc || {})) {
+        if (['name','abilities','resources','setup'].includes(k)) continue;
+        extra[k] = doc[k];
       }
 
-      // quoted multi-line or single-line
-      const quotedRe = new RegExp(`${k}:\\s*(['\"])([\\s\\S]*?)\\1(?=(?:\\n\\s{2}[A-Za-z0-9_-]+:)|\\n*$)`, 'm');
-      const q = block.match(quotedRe);
-      if (q) {
-        extra[k] = q[2].replace(/\\r/g, '').trim();
-        continue;
-      }
-
-      // inline scalar
-      const inlineRe = new RegExp(`${k}:\\s*([^\\n\\r]+)`, 'm');
-      const im = block.match(inlineRe);
-      if (im) {
-        extra[k] = im[1].trim();
-      }
-    }
-
-    items.push(Object.assign({ name, key, abilities, resources, setupKey }, extra));
+      return Object.assign({ name, key, abilities, resources, setupKey }, extra);
+    });
+  } catch (e) {
+    console.error('YAML parse error', e);
+    return [];
   }
-
-  return items;
 }
 
 // Fetch a scripts/data/*.yml file from raw.githubusercontent if present
