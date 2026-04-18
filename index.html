@@ -141,6 +141,33 @@
         pointer-events: none;
       }
 
+      /* Styled preview for external sites that block embedding */
+      .external-preview {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 12px;
+        color: var(--text-muted);
+        font-weight: 600;
+        font-size: 0.95rem;
+        background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(0,0,0,0.03));
+      }
+
+      .external-preview svg {
+        width: 48px;
+        height: 48px;
+        opacity: 0.95;
+        color: var(--accent);
+      }
+
+      .external-preview img {
+        width: 100%;
+        height: 100%;
+        display: block;
+        object-fit: cover;
+        object-position: left center;
+      }
+
       .home-card-body {
         padding: 24px 32px 32px;
         text-align: center;
@@ -268,6 +295,16 @@
               <h2 class="home-card-title">Custom Cards</h2>
               <p class="home-card-desc">My custom Leaders and Lore.</p>
               <span class="home-card-arrow">View Cards →</span>
+            </div>
+          </a>
+          <a href="https://arcs-card-generator.streamlit.app/" target="_blank" rel="noopener" class="home-card">
+            <div class="home-card-preview external-preview" aria-hidden="true">
+              <img src="./user-site-root/Generator.png" srcset="./user-site-root/android-chrome-512x512.png 2x" alt="Card Generator preview">
+            </div>
+            <div class="home-card-body">
+              <h2 class="home-card-title">Card Generator</h2>
+              <p class="home-card-desc">Create custom Arcs Leaders and Lore using the community card generator.</p>
+              <span class="home-card-arrow">Open Card Generator →</span>
             </div>
           </a>
           <a href="./dice.html" class="home-card">
