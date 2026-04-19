@@ -168,6 +168,18 @@
         object-position: left center;
       }
 
+      /* Force the provided Generator.png as a background on mobile to avoid incorrect fallbacks */
+      @media (max-width: 720px) {
+        .external-preview {
+          background-image: url("./user-site-root/Generator.png");
+          background-size: cover;
+          background-position: left center;
+        }
+        .external-preview img {
+          display: none !important;
+        }
+      }
+
       .home-card-body {
         padding: 24px 32px 32px;
         text-align: center;
@@ -299,11 +311,17 @@
           </a>
           <a href="https://arcs-card-generator.streamlit.app/" target="_blank" rel="noopener" class="home-card">
             <div class="home-card-preview external-preview" aria-hidden="true">
-              <img src="./user-site-root/Generator.png" srcset="./user-site-root/android-chrome-512x512.png 2x" alt="Card Generator preview">
+              <picture>
+                <!-- Use Generator.png on narrow/mobile viewports to ensure the intended image is shown -->
+                <source srcset="./user-site-root/Generator.png" media="(max-width: 720px)">
+                <!-- Prefer a higher-res icon for large/desktop high-DPI screens -->
+                <source srcset="./user-site-root/Generator.png 1x">
+                <img src="./user-site-root/Generator.png" alt="Card Generator preview">
+              </picture>
             </div>
             <div class="home-card-body">
               <h2 class="home-card-title">Card Generator</h2>
-              <p class="home-card-desc">Create custom Arcs Leaders and Lore using the community card generator.</p>
+              <p class="home-card-desc">Create custom Arcs cards using my card generator.</p>
               <span class="home-card-arrow">Open Card Generator →</span>
             </div>
           </a>
