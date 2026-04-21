@@ -168,15 +168,13 @@
         object-position: left center;
       }
 
-      /* Force the provided Generator.png as a background on mobile to avoid incorrect fallbacks */
+      /* Ensure external-preview images are always shown (use composed.png as the preview) */
       @media (max-width: 720px) {
         .external-preview {
-          background-image: url("./user-site-root/Generator.png");
-          background-size: cover;
-          background-position: left center;
+          background-image: none;
         }
         .external-preview img {
-          display: none !important;
+          display: block !important;
         }
       }
 
@@ -255,14 +253,22 @@
           <h1 class="logo">Arcs Arsenal</h1>
           <p class="tagline">Tools &amp; data for the Arcs board game</p>
         </div>
-        <button id="themeToggle" class="theme-toggle" aria-label="Toggle theme">
-          <svg class="icon-sun" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
-          </svg>
-          <svg class="icon-moon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/>
-          </svg>
-        </button>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <button id="themeToggle" class="theme-toggle" aria-label="Toggle theme">
+            <svg class="icon-sun" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
+            </svg>
+            <svg class="icon-moon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/>
+            </svg>
+          </button>
+          <a href="./" class="home-button" aria-label="Home">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+              <path d="M3 11.5L12 4l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1V11.5z" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <span>Home</span>
+          </a>
+        </div>
       </div>
     </header>
 
@@ -335,6 +341,19 @@
               <span class="home-card-arrow">Calculate Probabilities →</span>
             </div>
           </a>
+          <a href="https://steamcommunity.com/sharedfiles/filedetails/?id=3683918449" target="_blank" rel="noopener" class="home-card">
+            <div class="home-card-preview external-preview" aria-hidden="true">
+              <picture>
+                <source srcset="./composed.png" />
+                <img src="./composed.png" alt="Arcs: Celestial Edition preview">
+              </picture>
+            </div>
+            <div class="home-card-body">
+              <h2 class="home-card-title">Arcs: Celestial Edition</h2>
+              <p class="home-card-desc">The best TTS mod for Arcs</p>
+              <span class="home-card-arrow">Open on Steam Workshop →</span>
+            </div>
+          </a>
           <a href="./videos.html" class="home-card">
             <div class="home-card-preview">
               <iframe src="./videos.html" tabindex="-1" aria-hidden="true" loading="lazy"></iframe>
@@ -370,5 +389,35 @@
         localStorage.setItem("arcs-theme", next);
       });
     </script>
+    <!-- Floating background picker: appears when the user scrolls to the bottom -->
+    <div class="home-fab" id="bgFab" aria-hidden="true">
+      <label for="bgSelect" style="display:inline-flex;align-items:center;gap:8px;color:var(--text);font-weight:600;">
+        <select id="bgSelect" class="select bg-select" aria-label="Background">
+          <option value="none">None</option>
+          <option value="stars">Stars</option>
+          <option value="map">Map</option>
+          <option value="beyond">Beyond</option>
+          <option value="planets">Planets</option>
+        </select>
+      </label>
+    </div>
+
+    <script>
+      (function() {
+        const fab = document.getElementById('bgFab');
+        if (!fab) return;
+
+        function checkBottom() {
+          const atBottom = (window.innerHeight + window.scrollY) >= (document.documentElement.scrollHeight - 10);
+          if (atBottom) fab.classList.add('show'); else fab.classList.remove('show');
+        }
+
+        checkBottom();
+        window.addEventListener('scroll', checkBottom, { passive: true });
+        window.addEventListener('resize', checkBottom);
+      })();
+    </script>
+    <script src="./assets/bg-switcher.js"></script>
+    <script src="./assets/popups.js"></script>
   </body>
 </html>

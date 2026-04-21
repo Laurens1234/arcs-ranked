@@ -150,6 +150,7 @@
           <h1 class="logo"><a href="./" style="text-decoration:none;color:inherit">Videos</a></h1>
           <p class="tagline">Watch me play Arcs on: <a id="youtubeChannelLink" href="https://www.youtube.com/@Yan_Yannik" target="_blank" rel="noopener noreferrer" style="text-decoration: underline;">YouTube ↗</a></p>
         </div>
+        <div style="display:flex;align-items:center;gap:8px;">
         <button id="themeToggle" class="theme-toggle" aria-label="Toggle theme">
           <svg class="icon-sun" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
@@ -158,6 +159,13 @@
             <path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/>
           </svg>
         </button>
+        <a href="../" class="home-button" aria-label="Home">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <path d="M3 11.5L12 4l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1V11.5z" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <span>Home</span>
+        </a>
+        </div>
       </div>
     </header>
 
@@ -167,7 +175,7 @@
           <button class="tab active" type="button">Videos</button>
         </div>
         <div class="controls">
-          <a class="btn-compare" href="./">← Home</a>
+          
         </div>
       </div>
     </nav>
@@ -192,9 +200,21 @@
     <footer class="footer">
       <div class="container">
         <p><a href="./tierlist.html">My Tier List</a> · <a href="./data.html">Data Arsenal</a> · <a href="./draft.html">Draft Helper</a> · <a href="./dice.html">Dice Calculator</a> · <a href="./custom-cards.html">Custom Cards</a> · <a href="./videos.html">Videos</a> · <a href="./">Home</a></p>
+        <div style="margin-top:8px;display:flex;gap:8px;align-items:center;">
+          <label for="bgSelect" style="font-weight:600;color:var(--text-muted);">Background</label>
+          <select id="bgSelect" class="select bg-select">
+            <option value="none">None</option>
+            <option value="stars">Stars</option>
+            <option value="map">Map</option>
+            <option value="beyond">Beyond</option>
+            <option value="planets">Planets</option>
+          </select>
+        </div>
       </div>
     </footer>
 
     <script type="module" src="./assets/videos-app.js"></script>
+    <script src="./assets/bg-switcher.js"></script>
+    <script src="./assets/popups.js"></script>
   </body>
 </html>
