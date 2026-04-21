@@ -4,6 +4,7 @@
   const POLL_INTERVAL = 200; // ms while checking scroll
   const TRIGGER_THRESHOLD = 1; // px tolerance; <=1 treated as "at end"
   const POPUP_ID = 'page-popup-image';
+  const POPUPS_KEY = 'site-popups'; // 'on' (default) or 'off'
   let popupCreated = false;
   let popupVisible = false;
   let popupEl = null;
@@ -226,8 +227,27 @@
     try{ return window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches; }catch(e){ return false; }
   }
 
+  function popupsEnabled(){
+    try{
+      const v = localStorage.getItem(POPUPS_KEY);
+      return v !== 'off';
+    }catch(e){ return true; }
+  }
+
   function launchConfetti(anchorEl){
     if(prefersReducedMotion()) return;
+    // allow bigger/longer confetti when celebrating a Pig popup
+    let localCount = CONFETTI_COUNT;
+    let localDuration = CONFETTI_DURATION;
+    let sizeMultiplier = 1;
+    try{
+      if(anchorEl && anchorEl.src && /Pig/i.test(anchorEl.src)){
+        localCount = Math.max(120, CONFETTI_COUNT * 3);
+        localDuration = Math.max(3000, CONFETTI_DURATION * 2.5);
+        sizeMultiplier = 1.5;
+      }
+    }catch(e){}
+
     const canvas = document.createElement('canvas');
     canvas.className = 'popup-confetti-canvas';
     canvas.style.position = 'fixed';
@@ -251,15 +271,16 @@
 
     const now = performance.now();
     const particles = [];
-    for(let i=0;i<CONFETTI_COUNT;i++){
+    for(let i=0;i<localCount;i++){
       const angle = (Math.PI * (0.25 + Math.random() * 1.5));
       const speed = 120 + Math.random()*220;
+      const baseSize = 6 + Math.random()*8;
       particles.push({
         x: ax,
         y: ay,
         vx: Math.cos(angle)*speed/1000,
         vy: -Math.abs(Math.sin(angle))*speed/1000 - 0.1,
-        size: 6 + Math.random()*8,
+        size: baseSize * sizeMultiplier,
         color: CONFETTI_COLORS[Math.floor(Math.random()*CONFETTI_COLORS.length)],
         rot: Math.random()*Math.PI*2,
         trot: (Math.random()-0.5)*0.2
@@ -270,7 +291,7 @@
       const elapsed = t - now;
       ctx.clearRect(0,0,canvas.width,canvas.height);
       for(const p of particles){
-        const life = Math.min(1, elapsed/CONFETTI_DURATION);
+        const life = Math.min(1, elapsed/localDuration);
         const dx = p.vx * elapsed;
         const dy = p.vy * elapsed + 0.0008 * elapsed * elapsed; // gravity
         const x = p.x + dx; const y = p.y + dy;
@@ -281,7 +302,7 @@
         ctx.fillRect(-p.size/2, -p.size/2, p.size, p.size);
         ctx.restore();
       }
-      if(elapsed < CONFETTI_DURATION) requestAnimationFrame(draw);
+      if(elapsed < localDuration) requestAnimationFrame(draw);
       else { window.removeEventListener('resize', resize); if(canvas.parentNode) canvas.parentNode.removeChild(canvas); }
     }
     requestAnimationFrame(draw);
@@ -304,6 +325,14 @@
       popupEl = null;
     }, 500);
   }
+
+  // expose a tiny controller so other scripts can toggle/hide popups
+  try{
+    window._pagePopupController = window._pagePopupController || {};
+    window._pagePopupController.hide = hidePopup;
+    window._pagePopupController.isEnabled = popupsEnabled;
+    window._pagePopupController.setEnabled = function(enabled){ try{ localStorage.setItem(POPUPS_KEY, enabled ? 'on' : 'off'); }catch(e){} };
+  }catch(e){}
 
   function createPopupEl(src){
     // remove existing
@@ -390,6 +419,7 @@
     // check scroll to bottom (show popup) and hide when user scrolls up
     let checkTimer = null;
     function onScrollCheck(){
+      if(!popupsEnabled()) return; // respect the user's setting
       const scrollTop = window.scrollY || window.pageYOffset || document.documentElement.scrollTop;
       const viewportH = window.innerHeight || document.documentElement.clientHeight;
       const docH = Math.max(document.body.scrollHeight, document.documentElement.scrollHeight);
@@ -421,6 +451,13 @@
     // also poll in case no scroll occurs (user lands at bottom)
     checkTimer = setInterval(onScrollCheck, POLL_INTERVAL);
   }
+
+  // Listen for storage changes so the popup can hide immediately when turned off
+  window.addEventListener('storage', (e) => {
+    if(e.key === POPUPS_KEY){
+      if(e.newValue === 'off') hidePopup();
+    }
+  });
 
   // Track full page load; defer popup until all resources loaded
   window.addEventListener('load', () => {

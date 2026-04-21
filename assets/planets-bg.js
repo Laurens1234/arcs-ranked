@@ -2,7 +2,7 @@
   // planets overlay renderer
   const PLANET_COUNT_MIN = 7;
   const PLANET_COUNT_MAX = 14;
-  const TOTAL_VARIANTS = 15; // expected planet images in folder: ../background planets/background_planet (1).png ... (15)
+  const TOTAL_VARIANTS = 21; // expected planet images in folder: ../background planets/background_planet (1).png ... (15)
   // We'll attempt filename patterns to match files like:
   //   background_planet (1).png  (preferred)
   //   background_planet1.png     (fallback)
@@ -114,6 +114,11 @@
 
   function render(){
     if(!document.body.classList.contains('bg-planets')){ removeCanvas(); return; }
+    // If we already have a layout, reuse it (do not re-randomize) so planets
+    // remain fixed until the page is refreshed.
+    if(lastLayout && lastLayout.items && lastLayout.items.length){
+      createCanvas(); fitCanvas(); drawLastLayout(); return;
+    }
     createCanvas(); fitCanvas();
     const picks = pickRandomPlanets();
     loadImages(picks).then(images => {
@@ -150,7 +155,7 @@
           if(placedPos.y <= topThreshold) topPlaced = true;
           const alpha = 0.35 + Math.random() * 0.4;
           ctx.save(); ctx.globalAlpha = alpha; ctx.drawImage(img, placedPos.x, placedPos.y, drawW, drawH); ctx.restore();
-          layoutItems.push({ img, relX: placedPos.x / canvas.width, relY: placedPos.y / canvas.height, relDiameter: diameter / Math.min(canvas.width, canvas.height), ratio, alpha });
+          layoutItems.push({ img, absX: placedPos.x, absY: placedPos.y, absW: drawW, absH: drawH, ratio, alpha });
         }
       });
 
@@ -161,7 +166,7 @@
           const drawH = diameter; const drawW = diameter * ratio; const radius = Math.max(drawW, drawH) / 2;
           let attempts = 0; let placedPos = null; const topMin = Math.max(8, Math.floor(canvas.height * 0.02)); const topMax = Math.max(topMin + 1, Math.floor(canvas.height * 0.12));
           while(attempts < 500 && !placedPos){ attempts++; const x = Math.random() * Math.max(0, canvas.width - drawW); const y = topMin + Math.random() * (topMax - topMin); const cx = x + drawW/2; const cy = y + drawH/2; let ok = true; for(const p of placed){ const dx = cx - p.cx, dy = cy - p.cy; const minDist = radius + p.radius + margin; if((dx*dx + dy*dy) < (minDist * minDist)){ ok = false; break; } } if(ok) placedPos = { x, y, cx, cy, radius }; }
-          if(placedPos){ placed.push(placedPos); usedImages.push(img); const alphaTop = 0.35 + Math.random() * 0.4; ctx.save(); ctx.globalAlpha = alphaTop; ctx.drawImage(img, placedPos.x, placedPos.y, drawW, drawH); ctx.restore(); layoutItems.push({ img, relX: placedPos.x / canvas.width, relY: placedPos.y / canvas.height, relDiameter: diameter / Math.min(canvas.width, canvas.height), ratio, alpha: alphaTop }); }
+          if(placedPos){ placed.push(placedPos); usedImages.push(img); const alphaTop = 0.35 + Math.random() * 0.4; ctx.save(); ctx.globalAlpha = alphaTop; ctx.drawImage(img, placedPos.x, placedPos.y, drawW, drawH); ctx.restore(); layoutItems.push({ img, absX: placedPos.x, absY: placedPos.y, absW: drawW, absH: drawH, ratio, alpha: alphaTop }); }
         }
       }
 
@@ -175,11 +180,10 @@
     for(const it of lastLayout.items){
       const img = it.img;
       if(!img) continue;
-      const maxDim = Math.min(canvas.width, canvas.height);
-      const drawH = it.relDiameter * maxDim;
-      const drawW = drawH * (it.ratio || (img.width / img.height));
-      const x = it.relX * canvas.width;
-      const y = it.relY * canvas.height;
+      const drawW = it.absW || (it.relDiameter ? it.relDiameter * Math.min(canvas.width, canvas.height) : (img.width || 0));
+      const drawH = it.absH || (drawW / (it.ratio || (img.width / img.height)));
+      const x = (typeof it.absX === 'number') ? it.absX : (it.relX * canvas.width);
+      const y = (typeof it.absY === 'number') ? it.absY : (it.relY * canvas.height);
       ctx.save(); ctx.globalAlpha = it.alpha; ctx.drawImage(img, x, y, drawW, drawH); ctx.restore();
     }
   }
@@ -213,6 +217,23 @@
   // If the script is loaded after DOMContentLoaded, run init immediately
   if (document.readyState !== 'loading') {
     try { onDom(); } catch (e) { /* ignore */ }
+  }
+
+  // Observe body class changes so the canvas is removed immediately when
+  // the selected background changes away from 'planets'. This prevents the
+  // overlay from persisting when other backgrounds are active.
+  try {
+    const bodyClassObserver = new MutationObserver(muts => {
+      for (const m of muts) {
+        if (m.type === 'attributes' && m.attributeName === 'class') {
+          if (document.body.classList.contains('bg-planets')) render(); else removeCanvas();
+          break;
+        }
+      }
+    });
+    bodyClassObserver.observe(document.body, { attributes: true, attributeFilter: ['class'] });
+  } catch (e) {
+    // If observing fails (very old browsers), fall back to existing behavior.
   }
 
 })();

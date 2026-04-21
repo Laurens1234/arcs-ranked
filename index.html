@@ -250,7 +250,7 @@
     <header class="header">
       <div class="container header-inner">
         <div>
-          <h1 class="logo">Arcs Arsenal</h1>
+          <h1 class="logo"><a href="./" style="text-decoration:none;color:inherit">Arcs Arsenal</a></h1>
           <p class="tagline">Tools &amp; data for the Arcs board game</p>
         </div>
         <div style="display:flex;align-items:center;gap:8px;">
@@ -368,9 +368,6 @@
             <div class="home-card-body">
               <h2 class="home-card-title">About Arcs Arsenal</h2>
               <p class="home-card-desc">A comprehensive toolkit for Arcs players, built by Laurens. Explore data-driven insights, optimize your strategies and discover new ways to enjoy the game.</p>
-              <div style="display: flex; gap: 16px; justify-content: center; margin-top: 20px;">
-                <a href="https://discord.com/channels/1459242411325919317/1469409321065517136/1469409321065517136" target="_blank" class="home-card-arrow" style="margin: 0;">Join Discussion on Discord</a>
-              </div>
             </div>
           </div>
         </div>
@@ -389,34 +386,16 @@
         localStorage.setItem("arcs-theme", next);
       });
     </script>
-    <!-- Floating background picker: appears when the user scrolls to the bottom -->
-    <div class="home-fab" id="bgFab" aria-hidden="true">
-      <label for="bgSelect" style="display:inline-flex;align-items:center;gap:8px;color:var(--text);font-weight:600;">
-        <select id="bgSelect" class="select bg-select" aria-label="Background">
-          <option value="none">None</option>
-          <option value="stars">Stars</option>
-          <option value="map">Map</option>
-          <option value="beyond">Beyond</option>
-          <option value="planets">Planets</option>
-        </select>
-      </label>
-    </div>
-
-    <script>
-      (function() {
-        const fab = document.getElementById('bgFab');
-        if (!fab) return;
-
-        function checkBottom() {
-          const atBottom = (window.innerHeight + window.scrollY) >= (document.documentElement.scrollHeight - 10);
-          if (atBottom) fab.classList.add('show'); else fab.classList.remove('show');
-        }
-
-        checkBottom();
-        window.addEventListener('scroll', checkBottom, { passive: true });
-        window.addEventListener('resize', checkBottom);
-      })();
-    </script>
+    <!-- Background picker (single select used by assets/bg-switcher.js) -->
+    <select id="bgSelect" class="select bg-select" aria-label="Background">
+      <option value="none">None</option>
+      <option value="stars">Stars</option>
+      <option value="map">Map</option>
+      <option value="beyond">Beyond</option>
+      <option value="planets">Planets</option>
+    </select>
+    <!-- Popup toggle fallback: kept in markup so it's available even if JS runs later -->
+    <button id="popupToggleBtn" type="button" aria-pressed="false" style="display:none">Popups: On</button>
     <script src="./assets/bg-switcher.js"></script>
     <script src="./assets/popups.js"></script>
   </body>

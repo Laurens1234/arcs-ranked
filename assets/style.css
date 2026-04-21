@@ -897,6 +897,71 @@ body.bg-planets {
   }
 }
 
+/* Floating background selector fixed to bottom-right */
+label[for="bgSelect"] { display: none; }
+/* floating background selector: hidden by default, slightly dim when shown */
+#bgSelect {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 10050;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: rgba(12,14,20,0.75);
+  border: 1px solid rgba(255,255,255,0.06);
+  box-shadow: 0 6px 18px rgba(0,0,0,0.45);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(6px);
+  transition: opacity 220ms ease, transform 220ms ease;
+}
+
+body.bottom-controls-visible #bgSelect{
+  opacity: 0.85;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+/* Smaller on very small screens so it doesn't obstruct content */
+@media (max-width: 420px) {
+  #bgSelect { right: 12px; bottom: 12px; padding: 8px 10px; min-width: 92px; }
+}
+
+/* Popup toggle button - sits left of the background selector */
+/* popup toggle: gently hidden until bottom, low visual weight */
+#popupToggleBtn {
+  position: fixed;
+  right: 140px; /* sits to the left of #bgSelect (approx) */
+  bottom: 18px;
+  z-index: 10051;
+  padding: 6px 8px;
+  border-radius: 10px;
+  background: rgba(10,12,16,0.55);
+  border: 1px solid rgba(255,255,255,0.04);
+  color: rgba(240,242,245,0.85);
+  cursor: pointer;
+  box-shadow: 0 6px 16px rgba(0,0,0,0.35);
+  font-weight: 600;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(6px);
+  transition: opacity 220ms ease, transform 220ms ease, background 180ms ease;
+}
+#popupToggleBtn[aria-pressed="true"]{ background: linear-gradient(135deg, rgba(78,205,196,0.15), rgba(167,139,250,0.15)); color: rgba(0,0,0,0.9); }
+
+body.bottom-controls-visible #popupToggleBtn{
+  opacity: 0.75;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+@media (max-width: 640px){
+  #popupToggleBtn { right: 132px; }
+}
+@media (max-width: 420px) {
+  #popupToggleBtn { right: 110px; bottom: 12px; padding: 6px 8px; font-size: 0.85rem; }
+}
+
 /* Responsive - Small Mobile */
 @media (max-width: 400px) {
   .container {
