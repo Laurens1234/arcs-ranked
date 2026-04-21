@@ -8,6 +8,8 @@
   //   background_planet1.png     (fallback)
   const IMAGE_BASE = '../background planets/background_planet';
   const IMAGE_SUFFIX = '.png';
+  const IMAGE_DIR = '../background planets';
+  const IMAGE_NAME = 'background_planet';
   let canvas, ctx, resizeTimer;
 
   function createCanvas(){
@@ -80,12 +82,18 @@
   }
 
   function loadImageForIndex(i){
-    // Try common filename variants in order
-    const candidates = [
-      `${IMAGE_BASE} (${i})${IMAGE_SUFFIX}`,
-      `${IMAGE_BASE}%20(${i})${IMAGE_SUFFIX}`,
-      `${IMAGE_BASE}${i}${IMAGE_SUFFIX}`
+    // Try common filename variants in order, but ensure proper URL-encoding
+    const filenameVariants = [
+      `${IMAGE_NAME} (${i})${IMAGE_SUFFIX}`,
+      `${IMAGE_NAME}${i}${IMAGE_SUFFIX}`
     ];
+
+    const candidates = filenameVariants.map(fn => {
+      // encode each path segment separately to preserve slashes and dots
+      const segments = IMAGE_DIR.split('/').concat([fn]);
+      return segments.map(s => encodeURIComponent(s)).join('/');
+    });
+
     // try each sequentially until one loads
     return candidates.reduce((p, src) => p.then(found => found ? found : tryLoadSrc(src)), Promise.resolve(null));
   }
