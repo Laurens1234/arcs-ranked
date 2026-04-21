@@ -13,7 +13,7 @@
   // Remote raw.githubusercontent base for images (preferred source)
   // Use the standard raw URL with branch name (e.g. 'main')
   const REMOTE_BASE = 'https://raw.githubusercontent.com/Laurens1234/arcs-arsenal/main';
-  let canvas, ctx, resizeTimer;
+  let canvas, ctx, resizeTimer, lastLayout = null;
 
   function createCanvas(){
     removeCanvas();
@@ -113,118 +113,86 @@
   }
 
   function render(){
-    if(!document.body.classList.contains('bg-planets')){
-      removeCanvas();
-      return;
-    }
-    createCanvas();
-    fitCanvas();
+    if(!document.body.classList.contains('bg-planets')){ removeCanvas(); return; }
+    createCanvas(); fitCanvas();
     const picks = pickRandomPlanets();
     loadImages(picks).then(images => {
       if(!ctx) return;
       ctx.clearRect(0,0,canvas.width,canvas.height);
-      // Place planets with collision avoidance and much smaller sizes
       const maxDim = Math.min(canvas.width, canvas.height);
       const placed = [];
-      const margin = Math.max(8, Math.floor(maxDim * 0.01)); // small gap between planets
-
+      const margin = Math.max(8, Math.floor(maxDim * 0.01));
       const usedImages = [];
+      const layoutItems = [];
       let topPlaced = false;
-      const topThreshold = canvas.height * 0.12; // top 12% of viewport
+      const topThreshold = canvas.height * 0.12;
 
       images.forEach(img => {
         if(!img) return;
-        // target diameter as fraction of the smaller canvas dimension (small planets)
-        const diameter = maxDim * (0.04 + Math.random() * 0.06); // 4% - 10%
+        const diameter = maxDim * (0.04 + Math.random() * 0.06);
         const ratio = img.width / img.height;
-        const drawH = diameter;
-        const drawW = diameter * ratio;
+        const drawH = diameter; const drawW = diameter * ratio;
         const radius = Math.max(drawW, drawH) / 2;
 
-        // try to find a non-overlapping position
-        let attempts = 0;
-        let placedPos = null;
+        let attempts = 0; let placedPos = null;
         while(attempts < 300 && !placedPos){
           attempts++;
-          const x = Math.random() * (canvas.width - drawW);
-          const y = Math.random() * (canvas.height - drawH);
-          const cx = x + drawW/2;
-          const cy = y + drawH/2;
+          const x = Math.random() * Math.max(0, canvas.width - drawW);
+          const y = Math.random() * Math.max(0, canvas.height - drawH);
+          const cx = x + drawW/2; const cy = y + drawH/2;
           let ok = true;
-          for(const p of placed){
-            const dx = cx - p.cx;
-            const dy = cy - p.cy;
-            const dist2 = dx*dx + dy*dy;
-            const minDist = radius + p.radius + margin;
-            if(dist2 < (minDist * minDist)) { ok = false; break; }
-          }
-          if(ok){ placedPos = { x, y, cx, cy, radius }; break; }
+          for(const p of placed){ const dx = cx - p.cx, dy = cy - p.cy; const minDist = radius + p.radius + margin; if((dx*dx + dy*dy) < (minDist*minDist)){ ok = false; break; } }
+          if(ok) placedPos = { x, y, cx, cy, radius };
         }
 
         if(placedPos){
-          placed.push(placedPos);
-          usedImages.push(img);
+          placed.push(placedPos); usedImages.push(img);
           if(placedPos.y <= topThreshold) topPlaced = true;
-          ctx.save();
-          // randomize brightness per planet (35% - 75% opacity)
           const alpha = 0.35 + Math.random() * 0.4;
-          ctx.globalAlpha = alpha;
-          ctx.drawImage(img, placedPos.x, placedPos.y, drawW, drawH);
-          ctx.restore();
+          ctx.save(); ctx.globalAlpha = alpha; ctx.drawImage(img, placedPos.x, placedPos.y, drawW, drawH); ctx.restore();
+          layoutItems.push({ img, relX: placedPos.x / canvas.width, relY: placedPos.y / canvas.height, relDiameter: diameter / Math.min(canvas.width, canvas.height), ratio, alpha });
         }
-        // if not placed after attempts, skip this planet
       });
 
-      // Ensure at least one planet near the top
       if(!topPlaced){
-        // choose an image not yet used if possible
-        let candidateImg = images.find(img => img && !usedImages.includes(img));
-        if(!candidateImg) candidateImg = images.find(img => img);
+        let candidateImg = images.find(img => img && !usedImages.includes(img)) || images.find(img => img);
         if(candidateImg){
-          const img = candidateImg;
-          const diameter = maxDim * (0.04 + Math.random() * 0.06);
-          const ratio = img.width / img.height;
-          const drawH = diameter;
-          const drawW = diameter * ratio;
-          const radius = Math.max(drawW, drawH) / 2;
-
-          let attempts = 0;
-          let placedPos = null;
-          const topMin = Math.max(8, Math.floor(canvas.height * 0.02));
-          const topMax = Math.max(topMin + 1, Math.floor(canvas.height * 0.12));
-          while(attempts < 500 && !placedPos){
-            attempts++;
-            const x = Math.random() * (canvas.width - drawW);
-            const y = topMin + Math.random() * (topMax - topMin);
-            const cx = x + drawW/2;
-            const cy = y + drawH/2;
-            let ok = true;
-            for(const p of placed){
-              const dx = cx - p.cx;
-              const dy = cy - p.cy;
-              const dist2 = dx*dx + dy*dy;
-              const minDist = radius + p.radius + margin;
-              if(dist2 < (minDist * minDist)) { ok = false; break; }
-            }
-            if(ok){ placedPos = { x, y, cx, cy, radius }; break; }
-          }
-          if(placedPos){
-            placed.push(placedPos);
-            ctx.save();
-            // randomize brightness for top-placed planet as well
-            const alphaTop = 0.35 + Math.random() * 0.4;
-            ctx.globalAlpha = alphaTop;
-            ctx.drawImage(img, placedPos.x, placedPos.y, drawW, drawH);
-            ctx.restore();
-          }
+          const img = candidateImg; const diameter = maxDim * (0.04 + Math.random() * 0.06); const ratio = img.width / img.height;
+          const drawH = diameter; const drawW = diameter * ratio; const radius = Math.max(drawW, drawH) / 2;
+          let attempts = 0; let placedPos = null; const topMin = Math.max(8, Math.floor(canvas.height * 0.02)); const topMax = Math.max(topMin + 1, Math.floor(canvas.height * 0.12));
+          while(attempts < 500 && !placedPos){ attempts++; const x = Math.random() * Math.max(0, canvas.width - drawW); const y = topMin + Math.random() * (topMax - topMin); const cx = x + drawW/2; const cy = y + drawH/2; let ok = true; for(const p of placed){ const dx = cx - p.cx, dy = cy - p.cy; const minDist = radius + p.radius + margin; if((dx*dx + dy*dy) < (minDist * minDist)){ ok = false; break; } } if(ok) placedPos = { x, y, cx, cy, radius }; }
+          if(placedPos){ placed.push(placedPos); usedImages.push(img); const alphaTop = 0.35 + Math.random() * 0.4; ctx.save(); ctx.globalAlpha = alphaTop; ctx.drawImage(img, placedPos.x, placedPos.y, drawW, drawH); ctx.restore(); layoutItems.push({ img, relX: placedPos.x / canvas.width, relY: placedPos.y / canvas.height, relDiameter: diameter / Math.min(canvas.width, canvas.height), ratio, alpha: alphaTop }); }
         }
       }
-    });
+
+      lastLayout = { images: usedImages, items: layoutItems };
+    }).catch(()=>{});
+  }
+
+  function drawLastLayout(){
+    if(!lastLayout || !ctx || !canvas) return;
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    for(const it of lastLayout.items){
+      const img = it.img;
+      if(!img) continue;
+      const maxDim = Math.min(canvas.width, canvas.height);
+      const drawH = it.relDiameter * maxDim;
+      const drawW = drawH * (it.ratio || (img.width / img.height));
+      const x = it.relX * canvas.width;
+      const y = it.relY * canvas.height;
+      ctx.save(); ctx.globalAlpha = it.alpha; ctx.drawImage(img, x, y, drawW, drawH); ctx.restore();
+    }
   }
 
   function scheduleRender(){
     clearTimeout(resizeTimer);
     resizeTimer = setTimeout(render, 150);
+  }
+
+  function onResize(){
+    // keep canvas pixel size in sync and redraw the same layout (no reselection)
+    fitCanvas();
+    if(lastLayout) drawLastLayout(); else scheduleRender();
   }
 
   // Watch for storage and class changes
@@ -239,22 +207,12 @@
     if(current === 'planets') render();
   }
 
-  window.addEventListener('storage', onStorage);
-  window.addEventListener('resize', scheduleRender);
+  // Initialize once on DOM ready. Resize will now rescale the cached layout
+  window.addEventListener('resize', onResize);
   document.addEventListener('DOMContentLoaded', onDom);
   // If the script is loaded after DOMContentLoaded, run init immediately
   if (document.readyState !== 'loading') {
     try { onDom(); } catch (e) { /* ignore */ }
   }
-
-  // also observe class changes on body to react to programmatic switches
-  const observer = new MutationObserver(muts => {
-    for(const m of muts){
-      if(m.attributeName === 'class'){
-        if(document.body.classList.contains('bg-planets')) render(); else removeCanvas();
-      }
-    }
-  });
-  observer.observe(document.body, { attributes: true });
 
 })();

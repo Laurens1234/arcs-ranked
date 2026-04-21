@@ -11,6 +11,10 @@
   let chosenPickPromise = null; // in-flight pick promise to serialize
   let lastHideAt = 0;
   const SHOW_COOLDOWN_MS = 600; // small cooldown after hide to avoid thrash
+  let pageLoaded = false;
+  let pendingShow = false;
+  const INITIAL_GRACE_MS = 3000; // allow showing within first N ms even before full load
+  const scriptStart = Date.now();
 
   // Confetti settings
   const CONFETTI_COUNT = 36;
@@ -310,11 +314,10 @@
     img.src = src;
     img.alt = '';
     img.className = 'page-popup';
-    // random horizontal position along bottom (10%..90%)
-    const leftPct = 10 + Math.random() * 80;
-    img.style.left = leftPct + '%';
+    // always bottom-left position
+    img.style.left = '4vmin';
     // initial inline state: not visible and no bottom yet
-    img.style.transform = 'translateX(-50%) translateY(0)';
+    img.style.transform = 'translateY(0)';
     img.style.opacity = '0';
     document.body.appendChild(img);
     popupEl = img;
@@ -332,10 +335,10 @@
           // small rise so a little less than the full crop remains hidden (keep ~85-95% of crop hidden)
           const smallRise = Math.max(4, Math.round(crop * 0.15));
           img.style.willChange = 'transform, opacity';
-          img.style.transform = `translateX(-50%) translateY(0)`;
+          img.style.transform = `translateY(0)`;
           // animate to the lifted position
           requestAnimationFrame(()=>{
-            img.style.transform = `translateX(-50%) translateY(-${smallRise}px)`;
+            img.style.transform = `translateY(-${smallRise}px)`;
             img.style.opacity = '1';
             popupVisible = true;
             try{ if(/Pig/i.test(src)) launchConfetti(popupEl); }catch(e){}
@@ -344,7 +347,7 @@
           // fallback: small tuck
           requestAnimationFrame(()=>{
             img.style.bottom = '-20px';
-            img.style.transform = 'translateX(-50%) translateY(-10px)';
+            img.style.transform = 'translateY(-10px)';
             img.style.opacity = '1';
             popupVisible = true;
             try{ if(/Pig/i.test(src)) launchConfetti(popupEl); }catch(e){}
@@ -361,11 +364,25 @@
       const style = document.createElement('style');
       style.id = 'popups-style';
       style.textContent = `
-        .page-popup{ position:fixed; bottom:0; /* bottom will be adjusted per-image */
-          width:auto; max-width:22vw; max-height:12vh; height:auto; left:50%; transform:translateX(-50%) translateY(0);
-          transition: transform 420ms cubic-bezier(.22,.9,.35,1), opacity 320ms; opacity:0;
-          pointer-events:none; z-index: 9999; object-fit:contain; }
-        @media (max-width:600px){ .page-popup{ max-width:36vw; max-height:16vh; } }
+          /* Responsive popup sizing: keep smaller on desktop, larger on mobile.
+            Use clamp() combining vmin and vw so aspect-ratio changes behave well. */
+          .page-popup{ position:fixed; bottom:0; /* bottom will be adjusted per-image */
+           /* default to bottom-left alignment; JS also sets inline left */
+           left:4vmin; transform:translateY(0);
+           /* width: clamp(min, preferred, max) - tightened for desktop */
+           width: clamp(4vmin, 2vmin + 8vw, 14vw);
+           height: auto;
+           max-height: clamp(8vmin, 4vmin + 4vw, 12vmin);
+           transition: transform 420ms cubic-bezier(.22,.9,.35,1), opacity 320ms; opacity:0;
+           pointer-events:none; z-index: 9999; object-fit:contain; }
+        /* For narrow viewports (phones) use a larger preferred value */
+        @media (max-width:600px){
+          .page-popup{ width: clamp(14vmin, 24vw, 60vw); max-height: clamp(18vmin, 28vw, 40vmin); }
+        }
+        /* Extra-small popup for large desktop viewports */
+        @media (min-width:1000px){
+          .page-popup{ width: clamp(2.5vmin, 1vmin + 3vw, 7vw); max-width: 180px; max-height: clamp(6vmin, 4vmin + 2vw, 10vmin); }
+        }
       `;
       document.head.appendChild(style);
     }
@@ -384,9 +401,13 @@
         if(!popupVisible){
           const now = Date.now();
           if(now - lastHideAt < SHOW_COOLDOWN_MS) return; // still cooling down
-          ensureChosenPopup().then(src => {
-            if(src) createPopupEl(src);
-          });
+          // If page fully loaded or within initial grace period after open, show immediately.
+          if(pageLoaded || (now - scriptStart) <= INITIAL_GRACE_MS){
+            ensureChosenPopup().then(src => { if(src) createPopupEl(src); });
+          } else {
+            // otherwise queue and wait for full load
+            pendingShow = true;
+          }
         }
       } else {
         // hide if visible and user scrolled up
@@ -400,6 +421,23 @@
     // also poll in case no scroll occurs (user lands at bottom)
     checkTimer = setInterval(onScrollCheck, POLL_INTERVAL);
   }
+
+  // Track full page load; defer popup until all resources loaded
+  window.addEventListener('load', () => {
+    pageLoaded = true;
+    if(pendingShow){
+      pendingShow = false;
+      // re-check if still at end and then show
+      const scrollTop = window.scrollY || window.pageYOffset || document.documentElement.scrollTop;
+      const viewportH = window.innerHeight || document.documentElement.clientHeight;
+      const docH = Math.max(document.body.scrollHeight, document.documentElement.scrollHeight);
+      const diff = docH - (scrollTop + viewportH);
+      const atEnd = (diff <= TRIGGER_THRESHOLD);
+      if(atEnd && !popupVisible){
+        ensureChosenPopup().then(src => { if(src) createPopupEl(src); });
+      }
+    }
+  });
 
   // init when DOM ready
   if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
