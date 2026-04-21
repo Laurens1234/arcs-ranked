@@ -10,6 +10,9 @@
   const IMAGE_SUFFIX = '.png';
   const IMAGE_DIR = '../background planets';
   const IMAGE_NAME = 'background_planet';
+  // Remote raw.githubusercontent base for images (preferred source)
+  // Use the standard raw URL with branch name (e.g. 'main')
+  const REMOTE_BASE = 'https://raw.githubusercontent.com/Laurens1234/arcs-arsenal/main';
   let canvas, ctx, resizeTimer;
 
   function createCanvas(){
@@ -82,17 +85,24 @@
   }
 
   function loadImageForIndex(i){
-    // Try common filename variants in order, but ensure proper URL-encoding
+    // Try remote raw.githubusercontent URLs first, then local file variants.
     const filenameVariants = [
       `${IMAGE_NAME} (${i})${IMAGE_SUFFIX}`,
       `${IMAGE_NAME}${i}${IMAGE_SUFFIX}`
     ];
 
-    const candidates = filenameVariants.map(fn => {
-      // encode each path segment separately to preserve slashes and dots
-      const segments = IMAGE_DIR.split('/').concat([fn]);
-      return segments.map(s => encodeURIComponent(s)).join('/');
+    // Build remote URLs without encoding the REMOTE_BASE itself
+    const remoteCandidates = filenameVariants.map(fn => {
+      return REMOTE_BASE + '/' + encodeURIComponent('background planets') + '/' + encodeURIComponent(fn);
     });
+
+    // Local file candidates: encode path segments but keep relative path structure
+    const localCandidates = filenameVariants.map(fn => {
+      const segments = IMAGE_DIR.split('/').map(s => encodeURIComponent(s));
+      return segments.join('/') + '/' + encodeURIComponent(fn);
+    });
+
+    const candidates = remoteCandidates.concat(localCandidates);
 
     // try each sequentially until one loads
     return candidates.reduce((p, src) => p.then(found => found ? found : tryLoadSrc(src)), Promise.resolve(null));
