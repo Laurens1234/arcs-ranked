@@ -402,8 +402,8 @@ function updateResults() {
             </select>
             <label>Max:</label>
             <select id="max-${icon.key}" class="custom-prob-input">
-              ${Array.from({length: 21}, (_, i) => `<option value="${i}" ${currentValues[icon.key]?.max == i ? 'selected' : ''}>${i}</option>`).join('')}
-              <option value="999" ${currentValues[icon.key]?.max == 999 ? 'selected' : 'selected'}>&infin;</option>
+              ${Array.from({length: 21}, (_, i) => `<option value="${i}" ${currentValues[icon.key] && Number(currentValues[icon.key].max) === i ? 'selected' : ''}>${i}</option>`).join('')}
+              <option value="999" ${(!currentValues[icon.key] || Number(currentValues[icon.key].max) === 999) ? 'selected' : ''}>&infin;</option>
             </select>
             <span class="custom-prob-result" id="result-${icon.key}">0%</span>
           </div>
@@ -433,19 +433,7 @@ function updateResults() {
       };
 
       minInput.addEventListener('input', updateCustomProb);
-      maxInput.dataset.first = 'true';
-      maxInput.addEventListener('input', () => {
-        if (maxInput.dataset.first === 'true') {
-          const val = parseInt(maxInput.value) || 0;
-          if (val < 999) {
-            maxInput.value = '0';
-          } else if (val > 999) {
-            maxInput.value = '1';
-          }
-          maxInput.dataset.first = 'false';
-        }
-        updateCustomProb();
-      });
+      maxInput.addEventListener('change', updateCustomProb);
       // Initial update
       updateCustomProb();
     });
@@ -1527,6 +1515,13 @@ document.getElementById('assaultRerollCancelBtn').addEventListener('click', () =
   document.getElementById('assaultRerollModal').style.display = 'none';
 });
 
+// Close assault reroll modal when clicking outside the content
+document.getElementById('assaultRerollModal').addEventListener('click', (e) => {
+  if (e.target === document.getElementById('assaultRerollModal')) {
+    document.getElementById('assaultRerollModal').style.display = 'none';
+  }
+});
+
 // Raid reroll faces modal
 document.getElementById('raidRerollFacesBtn').addEventListener('click', () => {
   const modal = document.getElementById('raidRerollModal');
@@ -1691,6 +1686,13 @@ document.getElementById('raidRerollSaveBtn').addEventListener('click', () => {
 
 document.getElementById('raidRerollCancelBtn').addEventListener('click', () => {
   document.getElementById('raidRerollModal').style.display = 'none';
+});
+
+// Close raid reroll modal when clicking outside the content
+document.getElementById('raidRerollModal').addEventListener('click', (e) => {
+  if (e.target === document.getElementById('raidRerollModal')) {
+    document.getElementById('raidRerollModal').style.display = 'none';
+  }
 });
 
 // Empath reroll faces modal
@@ -1900,6 +1902,13 @@ document.getElementById('empathRerollSaveBtn').addEventListener('click', () => {
 
 document.getElementById('empathRerollCancelBtn').addEventListener('click', () => {
   document.getElementById('empathRerollModal').style.display = 'none';
+});
+
+// Close empath reroll modal when clicking outside the content
+document.getElementById('empathRerollModal').addEventListener('click', (e) => {
+  if (e.target === document.getElementById('empathRerollModal')) {
+    document.getElementById('empathRerollModal').style.display = 'none';
+  }
 });
 
 // Mirror Plating and Signal Breaker change listeners

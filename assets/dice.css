@@ -851,6 +851,13 @@
   background-color: rgba(0, 0, 0, 0.5);
 }
 
+/* Make specific reroll modals use an opaque backdrop so they're not see-through */
+#assaultRerollModal,
+#raidRerollModal,
+#empathRerollModal {
+  background-color: rgba(0, 0, 0, 0.95);
+}
+
 .modal-content {
   background-color: var(--bg-card);
   position: absolute;
