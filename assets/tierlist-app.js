@@ -149,8 +149,25 @@ async function fetchText(url) {
 }
 
 function getImageUrl(card) {
-  if (!card?.image) return null;
-  return `${CONFIG.cardImagesBaseUrl}${encodeURIComponent(card.image)}.png`;
+  if (card?.image) {
+    return `${CONFIG.cardImagesBaseUrl}${encodeURIComponent(card.image)}.png`;
+  }
+
+  const lookupName = String(card?.name ?? "")
+    .trim()
+    .replace(/^leader:\s*/i, "")
+    .replace(/^fate:\s*/i, "");
+  if (!lookupName) return null;
+
+  const type = normalizeText(card?.type);
+  const encodedName = encodeURIComponent(lookupName);
+  const fallbackBase = CONFIG.cardImageFallbackBaseUrl;
+
+  if (type === "leader" || type === "fate") {
+    return `${fallbackBase}Leaders/${encodedName}.png`;
+  }
+
+  return `${fallbackBase}${encodedName}.png`;
 }
 
 // Map of normalized fate/leader names -> BGG guide thread URLs (only BGG links)

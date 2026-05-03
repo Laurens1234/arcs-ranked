@@ -124,8 +124,25 @@ function formatCardText(text) {
 }
 
 function getImageUrl(card) {
-  if (!card?.image) return null;
-  return `${CONFIG.cardImagesBaseUrl}${encodeURIComponent(card.image)}.png`;
+  if (card?.image) {
+    return `${CONFIG.cardImagesBaseUrl}${encodeURIComponent(card.image)}.png`;
+  }
+
+  const lookupName = String(card?.name ?? "")
+    .trim()
+    .replace(/^leader:\s*/i, "")
+    .replace(/^fate:\s*/i, "");
+  if (!lookupName) return null;
+
+  const isLeaderLike = normalizeText(card?.type) === "leader" || normalizeText(card?.type) === "fate";
+  const encodedName = encodeURIComponent(lookupName);
+  const fallbackBase = CONFIG.cardImageFallbackBaseUrl;
+
+  if (isLeaderLike) {
+    return `${fallbackBase}Leaders/${encodedName}.png`;
+  }
+
+  return `${fallbackBase}${encodedName}.png`;
 }
 
 // ========== Theme Toggle ==========

@@ -8,6 +8,10 @@ export const CONFIG = {
   cardImagesBaseUrl:
     "https://raw.githubusercontent.com/buriedgiantstudios/cards/master/content/card-images/arcs/en-US/",
 
+  // Fallback image repository for cards that do not have an explicit YAML image.
+  cardImageFallbackBaseUrl:
+    "https://raw.githubusercontent.com/Laurens1234/arcs-arsenal/main/Cardimages/",
+
   // Google Sheets may redirect to login unless the file is accessible without auth.
   // Even if “Anyone with the link” is enabled, client-side fetch can still be blocked.
   // If this URL redirects to a login page, use File → Share → Publish to web and paste
