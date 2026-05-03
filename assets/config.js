@@ -31,4 +31,9 @@ export const CONFIG = {
   // Example: https://docs.google.com/spreadsheets/d/FILE_ID/export?format=csv&gid=0
   synergyCsvUrl:
     "https://docs.google.com/spreadsheets/d/1Ofzfrhi0JHFgniJevYy1u9ParOs5v1vSpUZqElu-6yI/export?format=csv&gid=0",
+
+  // Celestial data - game results with winners determined by highest power
+  // Each row represents a player in a game; winner is the player with highest Power in that Game ID
+  celestialCsvUrl:
+    "https://docs.google.com/spreadsheets/d/1yGuP7IcjnG_jbua4KH57D_68VaEhwOPhMT2yJkxG838/export?format=csv&gid=0",
 };

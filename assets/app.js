@@ -9,9 +9,11 @@ const el = {
   allCards: document.getElementById("allCards"),
   leaderCards: document.getElementById("leaderCards"),
   loreCards: document.getElementById("loreCards"),
+  gamesContainer: document.getElementById("gamesContainer"),
   allSection: document.getElementById("allSection"),
   leadersSection: document.getElementById("leadersSection"),
   loreSection: document.getElementById("loreSection"),
+  gamesSection: document.getElementById("gamesSection"),
   query: document.getElementById("query"),
   metric: document.getElementById("metric"),
   tabs: document.querySelectorAll(".tab"),
@@ -61,12 +63,15 @@ const el = {
   playerCountGroup: document.getElementById("playerCountGroup"),
   dataSourceLabel: document.getElementById("dataSourceLabel"),
   pageTagline: document.getElementById("pageTagline"),
+  // Games tab
+  gamesTab: document.querySelector("button[data-tab='games']"),
 };
 
 // ========== State ==========
 let appState = {
   leaders: [],
   lore: [],
+  otherCards: [],
   allCards: [],
   compareMode: false,
   compareCards: [null, null],
@@ -75,7 +80,9 @@ let appState = {
   playerCount: "3p",         // "3p" | "4p" (for Community)
   yamlCards: [],              // loaded card definitions
   leagueCards: null,          // { leaders, lore } from league data
+  celestialCards: null,       // { leaders, lore, others, games } from celestial data
   currentModalCard: null,     // current card in modal
+  celestialGames: [],         // array of game objects for Games tab
 };
 
 // ========== Utilities ==========
@@ -86,6 +93,20 @@ function setStatus(message, { isError = false } = {}) {
 
 function normalizeText(value) {
   return String(value ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function normalizeCardNameForLookup(value) {
+  const raw = String(value ?? "").trim();
+  return normalizeText(raw.replace(/^leader:\s*/i, "").replace(/^fate:\s*/i, ""));
+}
+
+function getCardTypeFromTags(tags = []) {
+  const normalized = new Set(tags.map((t) => normalizeText(t)));
+  if (normalized.has("leader")) return "Leader";
+  if (normalized.has("lore")) return "Lore";
+  if (normalized.has("fate")) return "Fate";
+  if (normalized.has("guild")) return "Guild";
+  return "Other";
 }
 
 function formatCardText(text) {
@@ -146,20 +167,41 @@ async function fetchText(url) {
 }
 
 async function loadCards() {
-  const text = await fetchText(CONFIG.cardsYamlUrl);
-  const data = yaml.load(text);
-  if (!Array.isArray(data)) throw new Error("Invalid YAML format");
-  
-  return data
-    .filter((c) => c && typeof c === "object" && c.name)
-    .map((c) => ({
+  const [baseText, blightedText] = await Promise.all([
+    fetchText(CONFIG.cardsYamlUrl),
+    CONFIG.blightedReachYamlUrl ? fetchText(CONFIG.blightedReachYamlUrl) : Promise.resolve(null),
+  ]);
+  const baseData = yaml.load(baseText);
+  if (!Array.isArray(baseData)) throw new Error("Invalid YAML format");
+
+  const blightedData = blightedText ? yaml.load(blightedText) : [];
+  if (blightedData && !Array.isArray(blightedData)) throw new Error("Invalid Blighted Reach YAML format");
+
+  const combined = [...baseData, ...(blightedData || [])];
+
+  const seen = new Set();
+  const cards = [];
+
+  for (const c of combined) {
+    if (!c || typeof c !== "object" || !c.name) continue;
+    const name = c.name ?? "";
+    const normalizedName = normalizeCardNameForLookup(name);
+    if (seen.has(normalizedName)) continue;
+    seen.add(normalizedName);
+
+    const tags = Array.isArray(c.tags) ? c.tags : [];
+    cards.push({
       id: c.id ?? null,
-      name: c.name ?? "",
+      name,
       image: c.image ?? null,
       imageClass: c.imageClass ?? "",
-      tags: Array.isArray(c.tags) ? c.tags : [],
+      tags,
       text: c.text ?? "",
-    }));
+      type: getCardTypeFromTags(tags),
+    });
+  }
+
+  return cards;
 }
 
 async function loadSheet() {
@@ -238,9 +280,157 @@ function joinCardsWithStats(cards, sheetRows) {
   return { cards: joined, totalStats: stats.length };
 }
 
+// ========== Celestial Data Parsing ==========
+async function loadCelestialSheet() {
+  const text = await fetchText(CONFIG.celestialCsvUrl);
+  const parsed = Papa.parse(text, { header: true, skipEmptyLines: true });
+  return parsed.data ?? [];
+}
+
+function parseCelestialSheet(rows, cardIndex) {
+  // Group rows by Game ID to find winners
+  const gameGroups = new Map();
+  
+  for (const row of rows) {
+    if (!row || !row["Game ID"]) continue;
+    
+    const gameId = row["Game ID"].trim();
+    if (!gameGroups.has(gameId)) {
+      gameGroups.set(gameId, []);
+    }
+    gameGroups.get(gameId).push(row);
+  }
+  
+  // Track stats for each card
+  const cardStats = new Map(); // cardName -> { wins, timesPicked }
+  const games = []; // Array of game objects for display
+  let totalGames = 0;
+
+  function resolveCardFromCsvName(csvName) {
+    const normalized = normalizeCardNameForLookup(csvName);
+    const matched = cardIndex?.get(normalized);
+    if (matched) {
+      return { name: matched.name, type: matched.type };
+    }
+    const raw = String(csvName ?? "").trim();
+    if (/^leader:/i.test(raw)) {
+      return { name: raw.replace(/^leader:\s*/i, ""), type: "Leader" };
+    }
+    if (/^fate:/i.test(raw)) {
+      return { name: raw.replace(/^fate:\s*/i, ""), type: "Fate" };
+    }
+    return { name: raw, type: "Other" };
+  }
+  
+  // Process each game to find winner and their cards
+  for (const [gameId, gamePlayers] of gameGroups) {
+    // Find winner (highest power)
+    let winner = null;
+    let maxPower = -Infinity;
+    
+    for (const player of gamePlayers) {
+      const power = parseInt(player["Power"] ?? "0", 10);
+      if (power > maxPower) {
+        maxPower = power;
+        winner = player;
+      }
+    }
+    
+    if (!winner) continue;
+    
+    // Extract cards from winner's JSON
+    let winnerCards = [];
+    try {
+      const jsonStr = winner["JSON"];
+      if (jsonStr) {
+        const jsonData = JSON.parse(jsonStr);
+        winnerCards = jsonData.cards ?? [];
+      }
+    } catch (e) {
+      console.warn(`Failed to parse JSON for game ${gameId}:`, e);
+    }
+    
+    // Build game object with player data
+    const gamePlayers_ = [];
+    for (const player of gamePlayers) {
+      let playerCards = [];
+      try {
+        const jsonStr = player["JSON"];
+        if (jsonStr) {
+          const jsonData = JSON.parse(jsonStr);
+          playerCards = jsonData.cards ?? [];
+        }
+      } catch (e) {
+        // Ignore parse errors
+      }
+      
+      gamePlayers_.push({
+        name: player["Name"] || "Unknown",
+        color: player["Color"] || "—",
+        power: parseInt(player["Power"] ?? "0", 10),
+        isWinner: player === winner,
+        cards: playerCards
+          .filter(c => c && c !== "Deck")
+          .map(cardName => {
+            const normalized = normalizeCardNameForLookup(cardName);
+            return cardIndex?.get(normalized) || { name: cardName, image: null };
+          }),
+      });
+      
+      // All players' cards go into timesPicked
+      for (const cardName of playerCards) {
+        if (!cardName || cardName === "Deck") continue;
+
+        const resolved = resolveCardFromCsvName(cardName);
+        const normalized = normalizeCardNameForLookup(resolved.name);
+        if (!cardStats.has(normalized)) {
+          cardStats.set(normalized, { name: resolved.name, type: resolved.type, wins: 0, timesPicked: 0 });
+        }
+        cardStats.get(normalized).timesPicked++;
+      }
+    }
+    
+    // Winner's cards get a win
+    for (const cardName of winnerCards) {
+      if (!cardName || cardName === "Deck") continue;
+
+      const resolved = resolveCardFromCsvName(cardName);
+      const normalized = normalizeCardNameForLookup(resolved.name);
+      if (!cardStats.has(normalized)) {
+        cardStats.set(normalized, { name: resolved.name, type: resolved.type, wins: 0, timesPicked: 0 });
+      }
+      cardStats.get(normalized).wins++;
+    }
+    
+    // Add to games array
+    totalGames++;
+    games.push({
+      gameId,
+      time: gamePlayers[0]?.["Time"] || "",
+      players: gamePlayers_,
+    });
+  }
+  
+  // Calculate win rates and determine type
+  const stats = [];
+  for (const [normalized, data] of cardStats) {
+    const winRate = data.timesPicked > 0 ? (data.wins / data.timesPicked) * 100 : 0;
+    
+    stats.push({
+      name: data.name,
+      type: data.type || "Other",
+      timesPicked: data.timesPicked,
+      wins: data.wins,
+      winRate: parseFloat(winRate.toFixed(2)),
+    });
+  }
+  
+  return { stats, totalGames, games };
+}
+
 // ========== Data Insights ==========
-function calculateInsights(leaders, lore, gamesOverride) {
-  const allCards = [...leaders, ...lore];
+function calculateInsights(leaders, lore, gamesOverride, allCardsOverride) {
+  const allCards = allCardsOverride ?? [...leaders, ...lore];
   const isCommunity = allCards[0]?.stats?.isCommunity;
   
   // Calculate averages
@@ -780,10 +970,10 @@ function renderTierList(cards, container) {
   });
 }
 
-function renderInsights(leaders, lore, gamesOverride, metric) {
+function renderInsights(leaders, lore, gamesOverride, metric, allCardsOverride) {
   metric = metric || el.metric?.value || "winRate";
-  const insights = calculateInsights(leaders, lore, gamesOverride);
-  const allCards = [...leaders, ...lore];
+  const allCards = allCardsOverride ?? [...leaders, ...lore];
+  const insights = calculateInsights(leaders, lore, gamesOverride, allCards);
   
   // Store insights in state for badge rendering
   appState.insights = insights;
@@ -808,7 +998,7 @@ function renderInsights(leaders, lore, gamesOverride, metric) {
 }
 
 function refreshHistograms(metric) {
-  const allCards = [...appState.leaders, ...appState.lore];
+  const allCards = appState.allCards?.length ? appState.allCards : [...appState.leaders, ...appState.lore];
   renderHistogram(allCards, el.allHistogram, "all", metric);
   renderHistogram(appState.leaders, el.leaderHistogram, "leader", metric);
   renderHistogram(appState.lore, el.loreHistogram, "lore", metric);
@@ -919,6 +1109,59 @@ function renderCards(cards, container, metric, query) {
   container.innerHTML = "";
   sorted.forEach((card, i) => {
     container.appendChild(createCardElement(card, i + 1, metric));
+  });
+}
+
+// ========== Render Games ==========
+function renderGames(games, container) {
+  if (!games || games.length === 0) {
+    container.innerHTML = `<div style="padding:2rem;text-align:center;color:var(--text-muted)">No games available</div>`;
+    return;
+  }
+  
+  const sortPlayerCards = (cards) => {
+    return [...cards].sort((a, b) => {
+      const typeOrder = { "Leader": 0, "Fate": 0, "Lore": 1 };
+      const aOrder = typeOrder[a.type] !== undefined ? typeOrder[a.type] : 2;
+      const bOrder = typeOrder[b.type] !== undefined ? typeOrder[b.type] : 2;
+      return aOrder - bOrder;
+    });
+  };
+  
+  container.innerHTML = games.map((game, idx) => {
+    const playerRows = game.players.map(p => {
+      const sortedCards = sortPlayerCards(p.cards);
+      const cardImages = sortedCards.length > 0 
+        ? sortedCards.map(card => {
+            const imgUrl = getImageUrl(card);
+            const isRotated = normalizeText(card.imageClass) === "rotated";
+            return imgUrl 
+              ? `<img src="${imgUrl}" alt="${card.name}" data-card="${card.name}" class="game-card-image ${isRotated ? 'rotated' : ''}" loading="lazy" style="cursor: pointer;">` 
+              : `<span class="game-card-placeholder" data-card="${card.name}" style="cursor: pointer;">${card.name}</span>`;
+          }).join("")
+        : '<span style="color:var(--text-muted);font-size:0.9rem">No cards</span>';
+      
+      return `<div class="game-player ${p.isWinner ? "game-winner" : ""}"><div class="game-player-header"><span class="game-player-name">${p.name || "Unknown"}</span><span class="game-player-color" style="color:var(--color-${p.color?.toLowerCase() || 'gray'})">●</span><span class="game-player-power">${p.power} Power</span>${p.isWinner ? '<span class="game-winner-badge">🏆 Winner</span>' : ''}</div><div class="game-player-cards">${cardImages}</div></div>`;
+    }).join("");
+    
+    // Format date in international order (DD-MM-YYYY)
+    let formattedDate = "—";
+    if (game.time) {
+      const datePart = game.time.split(" ")[0]; // Get only the date part
+      const [month, day, year] = datePart.split("/");
+      formattedDate = `${day.padStart(2, "0")}-${month.padStart(2, "0")}-${year}`;
+    }
+    
+    return `<div class="game-card"><div class="game-header"><h3 class="game-title">Game ${game.gameId}</h3><span class="game-timestamp">${formattedDate}</span></div><div class="game-players">${playerRows}</div></div>`;
+  }).join("");
+  
+  // Add click handlers to cards
+  container.querySelectorAll("[data-card]").forEach(elem => {
+    elem.addEventListener("click", () => {
+      const name = elem.dataset.card;
+      const card = appState.allCards.find(c => c.name === name);
+      if (card) openModal(card);
+    });
   });
 }
 
@@ -1120,14 +1363,17 @@ function wireUi(state) {
       el.allSection.classList.add("hidden");
       el.leadersSection.classList.add("hidden");
       el.loreSection.classList.add("hidden");
+      if (el.gamesSection) el.gamesSection.classList.add("hidden");
       
       // Show the selected section
       if (tab.dataset.tab === "all") {
         el.allSection.classList.remove("hidden");
       } else if (tab.dataset.tab === "leaders") {
         el.leadersSection.classList.remove("hidden");
-      } else {
+      } else if (tab.dataset.tab === "lore") {
         el.loreSection.classList.remove("hidden");
+      } else if (tab.dataset.tab === "games") {
+        if (el.gamesSection) el.gamesSection.classList.remove("hidden");
       }
     });
   });
@@ -1170,15 +1416,40 @@ function buildCommunityCards(yamlCards, playerCount) {
   return { leaders, lore, games };
 }
 
+// ========== Celestial Data ==========
+async function buildCelestialCards(yamlCards) {
+  const rows = await loadCelestialSheet();
+  const cardIndex = new Map(
+    yamlCards.map((c) => [normalizeCardNameForLookup(c.name), c])
+  );
+  const { stats, totalGames, games } = parseCelestialSheet(rows, cardIndex);
+  const statsIndex = new Map(stats.map((s) => [normalizeText(s.name), s]));
+
+  const cards = [];
+  for (const card of yamlCards) {
+    const stat = statsIndex.get(normalizeText(card.name));
+    if (stat) {
+      cards.push({ ...card, stats: stat });
+    }
+  }
+
+  const leaders = cards.filter((c) => c.stats?.type === "Leader");
+  const lore = cards.filter((c) => c.stats?.type === "Lore");
+  const others = cards.filter((c) => !["Leader", "Lore"].includes(c.stats?.type));
+  return { leaders, lore, others, games: totalGames, gamesArray: games };
+}
+
 function switchDataSource(source, playerCount) {
   appState.dataSource = source;
   appState.playerCount = playerCount || appState.playerCount;
 
-  let leaders, lore, games;
+  let leaders, lore, games, allCards;
   if (source === "league") {
     leaders = appState.leagueCards.leaders;
     lore = appState.leagueCards.lore;
     games = null; // will be estimated by calculateInsights
+    appState.celestialGames = [];
+    allCards = [...leaders, ...lore];
     const totalPicks = leaders.reduce((sum, c) => sum + (c.stats?.timesPicked ?? 0), 0);
     const estimatedGames = Math.round(totalPicks / 4);
     if (el.dataSourceLabel) {
@@ -1186,6 +1457,22 @@ function switchDataSource(source, playerCount) {
     }
     if (el.pageTagline) {
       el.pageTagline.textContent = "Leaders & Lore win rates from Arcs League games";
+    }
+  } else if (source === "celestial") {
+    if (!appState.celestialCards) {
+      setStatus("Celestial data not available", { isError: true });
+      return;
+    }
+    leaders = appState.celestialCards.leaders;
+    lore = appState.celestialCards.lore;
+    games = appState.celestialCards.games;
+    appState.celestialGames = appState.celestialCards.gamesArray || [];
+    allCards = [...leaders, ...lore, ...(appState.celestialCards.others || [])];
+    if (el.dataSourceLabel) {
+      el.dataSourceLabel.innerHTML = `Data from <a href="https://docs.google.com/spreadsheets/d/1yGuP7IcjnG_jbua4KH57D_68VaEhwOPhMT2yJkxG838/edit?gid=0" target="_blank">Celestial Games</a> (${games} games)`;
+    }
+    if (el.pageTagline) {
+      el.pageTagline.textContent = "Leaders & Lore win rates from Celestial game results";
     }
   } else {
     const { stats, games } = buildCommunityStats(appState.playerCount);
@@ -1197,6 +1484,8 @@ function switchDataSource(source, playerCount) {
       .filter(Boolean);
     leaders = communityCards.filter((c) => c.stats.type === "Leader");
     lore = communityCards.filter((c) => c.stats.type === "Lore");
+    appState.celestialGames = [];
+    allCards = [...leaders, ...lore];
     if (el.dataSourceLabel) {
       const label = appState.playerCount === "3p" ? "3-player" : "4-player";
       el.dataSourceLabel.innerHTML = `Community ${label} data (${games} games) from <a href="https://boardgamegeek.com/thread/3604653/leaders-and-lore-ranking-and-winrates" target="_blank">BGG</a>`;
@@ -1212,7 +1501,8 @@ function switchDataSource(source, playerCount) {
   // Update state
   appState.leaders = leaders;
   appState.lore = lore;
-  appState.allCards = [...leaders, ...lore];
+  appState.otherCards = allCards.filter((c) => !["Leader", "Lore"].includes(c.stats?.type));
+  appState.allCards = allCards;
   appState.compareCards = [null, null];
 
   // Configure metric options based on data source
@@ -1225,7 +1515,7 @@ function switchDataSource(source, playerCount) {
     el.metric.querySelector('option[value="timesPicked"]').disabled = true;
   } else {
     el.metric.value = "winRate";
-    // For league data: enable winRate/wins/timesPicked, disable draftRank
+    // For league data and celestial: enable winRate/wins/timesPicked, disable draftRank
     el.metric.querySelector('option[value="winRate"]').disabled = false;
     el.metric.querySelector('option[value="wins"]').disabled = false;
     el.metric.querySelector('option[value="timesPicked"]').disabled = false;
@@ -1233,7 +1523,10 @@ function switchDataSource(source, playerCount) {
   }
 
   // Re-render everything
-  renderInsights(leaders, lore, games);
+  renderInsights(leaders, lore, games, undefined, allCards);
+  if (el.gamesContainer && appState.celestialGames.length > 0) {
+    renderGames(appState.celestialGames, el.gamesContainer);
+  }
   if (refreshCards) refreshCards();
 }
 
@@ -1245,12 +1538,25 @@ function wireDataSourceToggle() {
       el.dataSourceGroup.querySelectorAll(".ds-btn").forEach((b) => b.classList.remove("active"));
       btn.classList.add("active");
       const value = btn.dataset.value;
+      // Enable Games tab only for Celestial data source
+      if (el.gamesTab) {
+        if (value === "celestial") {
+          el.gamesTab.disabled = false;
+        } else {
+          el.gamesTab.disabled = true;
+          // Switch away from Games tab if it's currently active
+          if (el.gamesTab.classList.contains("active")) {
+            el.gamesTab.classList.remove("active");
+            document.querySelector("button[data-tab='leaders']").classList.add("active");
+          }
+        }
+      }
       if (value === "Community") {
         el.playerCountGroup.classList.remove("hidden");
         switchDataSource("Community", appState.playerCount);
       } else {
         el.playerCountGroup.classList.add("hidden");
-        switchDataSource("league");
+        switchDataSource(value);
       }
     });
   });
@@ -1335,6 +1641,15 @@ async function main() {
     // Store league data for switching
     appState.leagueCards = { leaders, lore };
     
+    // Load Celestial data in the background
+    try {
+      const celestialData = await buildCelestialCards(allCards);
+      appState.celestialCards = celestialData;
+    } catch (err) {
+      console.warn("Failed to load Celestial data:", err);
+      appState.celestialCards = null;
+    }
+    
     setStatus("");
     
     // Render insights first (sets appState.insights for badges)
@@ -1355,6 +1670,11 @@ async function main() {
 
     // Wire up data source toggle
     wireDataSourceToggle();
+    
+    // Disable Games tab initially (only enabled with Celestial data source)
+    if (el.gamesTab) {
+      el.gamesTab.disabled = true;
+    }
 
     // Ensure initial data source UI/footer is populated (show league totals)
     switchDataSource("league");

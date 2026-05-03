@@ -124,6 +124,7 @@
           <button class="tab active" data-tab="leaders">Leaders</button>
           <button class="tab" data-tab="lore">Lore</button>
           <button class="tab" data-tab="all">All Cards</button>
+          <button class="tab" data-tab="games">Games</button>
         </div>
         <div class="controls">
           <button id="compareBtn" class="btn-compare">Compare</button>
@@ -146,6 +147,7 @@
         <div class="data-source-toggle" id="dataSourceGroup">
           <button class="ds-btn active" data-value="league">League</button>
           <button class="ds-btn" data-value="Community">Community</button>
+          <button class="ds-btn" data-value="celestial">Celestial</button>
         </div>
         <div class="data-source-toggle hidden" id="playerCountGroup">
           <button class="ds-btn active" data-value="3p">3P (983 games)</button>
@@ -290,6 +292,10 @@
             <div id="allTierList" class="tier-list"></div>
           </div>
           <div id="allCards" class="card-grid"></div>
+        </section>
+
+        <section id="gamesSection" class="section hidden">
+          <div id="gamesContainer" class="games-grid"></div>
         </section>
       </div>
     </main>

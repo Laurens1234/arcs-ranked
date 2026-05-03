@@ -24,8 +24,8 @@ def split_dice_image(image_path, output_dir):
     width, height = img.size
 
     # Calculate piece dimensions
-    piece_width = width // 3
-    piece_height = height // 3
+    piece_width = width // 4
+    piece_height = height // 4
 
     # Get the base filename without extension
     base_name = os.path.splitext(os.path.basename(image_path))[0]
@@ -34,8 +34,8 @@ def split_dice_image(image_path, output_dir):
     os.makedirs(output_dir, exist_ok=True)
 
     # Split into 3x3 grid
-    for row in range(3):
-        for col in range(3):
+    for row in range(4):
+        for col in range(4):
             # Calculate crop coordinates
             left = col * piece_width
             top = row * piece_height
@@ -54,14 +54,12 @@ def split_dice_image(image_path, output_dir):
 
 def main():
     # Input and output directories
-    input_dir = "dice/images"
-    output_dir = "dice/faces"
+    input_dir = "CardImages/"
+    output_dir = "CardImages/Leaders"
 
     # Dice image files
     dice_files = [
-        "assault-die.png",
-        "skirmish-die.png",
-        "raid-die.png"
+        "BtR Kit 3 TTS.jpg"
     ]
 
     print("Splitting dice images into individual faces...")
