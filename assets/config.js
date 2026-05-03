@@ -10,7 +10,15 @@ export const CONFIG = {
 
   // Fallback image repository for cards that do not have an explicit YAML image.
   cardImageFallbackBaseUrl:
-    "https://raw.githubusercontent.com/Laurens1234/arcs-arsenal/main/Cardimages/",
+    "https://raw.githubusercontent.com/Laurens1234/arcs-arsenal/refs/heads/main/Cardimages/",
+
+  // Fallback image repository for leaders loaded from the leader YAML source.
+  leaderImageFallbackBaseUrl:
+    "https://raw.githubusercontent.com/Laurens1234/Arcs-Leader-Generator/refs/heads/main/results/leader/",
+
+  // Leader YAML used by the custom-cards app as a canonical name source.
+  leaderYamlUrl:
+    "https://raw.githubusercontent.com/Laurens1234/Arcs-Leader-Generator/main/scripts/data/leaders.yml",
 
   // Google Sheets may redirect to login unless the file is accessible without auth.
   // Even if “Anyone with the link” is enabled, client-side fetch can still be blocked.

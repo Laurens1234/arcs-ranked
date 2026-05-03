@@ -153,21 +153,50 @@ function getImageUrl(card) {
     return `${CONFIG.cardImagesBaseUrl}${encodeURIComponent(card.image)}.png`;
   }
 
-  const lookupName = String(card?.name ?? "")
+  const rawName = String(card?.name ?? "");
+  const lookupName = rawName
     .trim()
     .replace(/^leader:\s*/i, "")
     .replace(/^fate:\s*/i, "");
   if (!lookupName) return null;
 
-  const type = normalizeText(card?.type);
-  const encodedName = encodeURIComponent(lookupName);
-  const fallbackBase = CONFIG.cardImageFallbackBaseUrl;
-
-  if (type === "leader" || type === "fate") {
-    return `${fallbackBase}Leaders/${encodedName}.png`;
+  const normalizedLookupName = normalizeCardNameForLookup(lookupName);
+  const canonicalName = leaderFallbackNamesByKey.get(normalizedLookupName);
+  if (canonicalName) {
+    const filename = `${String(canonicalName || lookupName || "").replace(/[^A-Za-z0-9_ ]/g, "")}_Card.png`;
+    return `${CONFIG.leaderImageFallbackBaseUrl}${encodeURIComponent(filename)}`;
   }
 
-  return `${fallbackBase}${encodedName}.png`;
+  return `${CONFIG.cardImageFallbackBaseUrl}${encodeURIComponent(lookupName)}.png`;
+}
+
+let leaderFallbackNamesByKey = new Map();
+let leaderFallbackNamesLoaded = false;
+
+async function loadLeaderFallbackNames() {
+  if (leaderFallbackNamesLoaded) return leaderFallbackNamesByKey;
+  leaderFallbackNamesLoaded = true;
+
+  if (!CONFIG.leaderYamlUrl) return leaderFallbackNamesByKey;
+
+  try {
+    const yamlText = await fetchText(CONFIG.leaderYamlUrl);
+    const docs = yaml.load(yamlText);
+    if (!Array.isArray(docs)) return leaderFallbackNamesByKey;
+
+    const nextMap = new Map();
+    for (const doc of docs) {
+      const name = String(doc?.name ?? "").trim();
+      if (!name) continue;
+      const key = normalizeCardNameForLookup(name);
+      if (!nextMap.has(key)) nextMap.set(key, name);
+    }
+    leaderFallbackNamesByKey = nextMap;
+  } catch (err) {
+    console.warn("Failed to load leader YAML fallback names:", err);
+  }
+
+  return leaderFallbackNamesByKey;
 }
 
 // Map of normalized fate/leader names -> BGG guide thread URLs (only BGG links)

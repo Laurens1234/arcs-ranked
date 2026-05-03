@@ -100,6 +100,26 @@ function normalizeCardNameForLookup(value) {
   return normalizeText(raw.replace(/^leader:\s*/i, "").replace(/^fate:\s*/i, ""));
 }
 
+let leaderYamlDocsPromise = null;
+
+async function loadLeaderYamlDocs() {
+  if (!CONFIG.leaderYamlUrl) return [];
+
+  if (!leaderYamlDocsPromise) {
+    leaderYamlDocsPromise = fetchText(CONFIG.leaderYamlUrl)
+      .then((yamlText) => {
+        const docs = yaml.load(yamlText);
+        return Array.isArray(docs) ? docs : [];
+      })
+      .catch((err) => {
+        console.warn("Failed to load leader YAML docs:", err);
+        return [];
+      });
+  }
+
+  return leaderYamlDocsPromise;
+}
+
 function getCardTypeFromTags(tags = []) {
   const normalized = new Set(tags.map((t) => normalizeText(t)));
   if (normalized.has("leader")) return "Leader";
@@ -123,26 +143,85 @@ function formatCardText(text) {
   return formatted;
 }
 
+// Update the browser URL to reflect current tab/source/playerCount
+function updateUrlParams({ tab, source, playerCount } = {}) {
+  try {
+    const url = new URL(window.location.href);
+    const params = url.searchParams;
+
+    if (tab !== undefined) {
+      if (tab) params.set('tab', tab);
+      else params.delete('tab');
+    }
+    if (source !== undefined) {
+      if (source) params.set('source', source);
+      else params.delete('source');
+    }
+    // If source is explicitly set and it's not Community, ensure playerCount is removed
+    if (source !== undefined && source !== 'Community') {
+      params.delete('playerCount');
+    }
+    if (playerCount !== undefined) {
+      if (playerCount && source === 'Community') params.set('playerCount', playerCount);
+      else if (!playerCount) params.delete('playerCount');
+    }
+
+    const newSearch = params.toString();
+    const newUrl = url.pathname + (newSearch ? `?${newSearch}` : '') + url.hash;
+    history.replaceState(null, '', newUrl);
+  } catch (err) {
+    console.warn('Failed to update URL params', err);
+  }
+}
+
 function getImageUrl(card) {
   if (card?.image) {
     return `${CONFIG.cardImagesBaseUrl}${encodeURIComponent(card.image)}.png`;
   }
 
-  const lookupName = String(card?.name ?? "")
+  const rawName = String(card?.name ?? "");
+  const lookupName = rawName
     .trim()
     .replace(/^leader:\s*/i, "")
     .replace(/^fate:\s*/i, "");
   if (!lookupName) return null;
 
-  const isLeaderLike = normalizeText(card?.type) === "leader" || normalizeText(card?.type) === "fate";
-  const encodedName = encodeURIComponent(lookupName);
-  const fallbackBase = CONFIG.cardImageFallbackBaseUrl;
-
-  if (isLeaderLike) {
-    return `${fallbackBase}Leaders/${encodedName}.png`;
+  const normalizedLookupName = normalizeCardNameForLookup(lookupName);
+  const canonicalName = leaderFallbackNamesByKey.get(normalizedLookupName);
+  if (canonicalName) {
+    const filename = `${String(canonicalName || lookupName || "").replace(/[^A-Za-z0-9_ ]/g, "")}_Card.png`;
+    return `${CONFIG.leaderImageFallbackBaseUrl}${encodeURIComponent(filename)}`;
   }
 
-  return `${fallbackBase}${encodedName}.png`;
+  return `${CONFIG.cardImageFallbackBaseUrl}${encodeURIComponent(lookupName)}.png`;
+}
+
+let leaderFallbackNamesByKey = new Map();
+let leaderFallbackNamesLoaded = false;
+
+async function loadLeaderFallbackNames() {
+  if (leaderFallbackNamesLoaded) return leaderFallbackNamesByKey;
+  leaderFallbackNamesLoaded = true;
+
+  if (!CONFIG.leaderYamlUrl) return leaderFallbackNamesByKey;
+
+  try {
+    const docs = await loadLeaderYamlDocs();
+    if (!Array.isArray(docs)) return leaderFallbackNamesByKey;
+
+    const nextMap = new Map();
+    for (const doc of docs) {
+      const name = String(doc?.name ?? "").trim();
+      if (!name) continue;
+      const key = normalizeCardNameForLookup(name);
+      if (!nextMap.has(key)) nextMap.set(key, name);
+    }
+    leaderFallbackNamesByKey = nextMap;
+  } catch (err) {
+    console.warn("Failed to load leader YAML fallback names:", err);
+  }
+
+  return leaderFallbackNamesByKey;
 }
 
 // ========== Theme Toggle ==========
@@ -184,9 +263,10 @@ async function fetchText(url) {
 }
 
 async function loadCards() {
-  const [baseText, blightedText] = await Promise.all([
+  const [baseText, blightedText, leaderDocs] = await Promise.all([
     fetchText(CONFIG.cardsYamlUrl),
     CONFIG.blightedReachYamlUrl ? fetchText(CONFIG.blightedReachYamlUrl) : Promise.resolve(null),
+    loadLeaderYamlDocs(),
   ]);
   const baseData = yaml.load(baseText);
   if (!Array.isArray(baseData)) throw new Error("Invalid YAML format");
@@ -194,7 +274,23 @@ async function loadCards() {
   const blightedData = blightedText ? yaml.load(blightedText) : [];
   if (blightedData && !Array.isArray(blightedData)) throw new Error("Invalid Blighted Reach YAML format");
 
-  const combined = [...baseData, ...(blightedData || [])];
+  const leaderData = (leaderDocs || [])
+    .map((doc) => {
+      const name = String(doc?.name ?? "").trim();
+      if (!name) return null;
+      return {
+        id: doc?.id ?? null,
+        name,
+        image: null,
+        imageClass: "",
+        tags: ["Leader"],
+        text: doc?.abilities ?? "",
+        type: "Leader",
+      };
+    })
+    .filter(Boolean);
+
+  const combined = [...baseData, ...(blightedData || []), ...leaderData];
 
   const seen = new Set();
   const cards = [];
@@ -1138,9 +1234,18 @@ function renderGames(games, container) {
   
   const sortPlayerCards = (cards) => {
     return [...cards].sort((a, b) => {
-      const typeOrder = { "Leader": 0, "Fate": 0, "Lore": 1 };
-      const aOrder = typeOrder[a.type] !== undefined ? typeOrder[a.type] : 2;
-      const bOrder = typeOrder[b.type] !== undefined ? typeOrder[b.type] : 2;
+      const getOrder = (card) => {
+        const rawName = String(card?.name ?? "").trim();
+        const typeNorm = normalizeText(card?.type);
+        // Leader or Fate first
+        if (typeNorm === 'leader' || /^leader:/i.test(rawName) || /^fate:/i.test(rawName)) return 0;
+        // Lore next
+        if (typeNorm === 'lore' || /^lore:/i.test(rawName)) return 1;
+        return 2;
+      };
+
+      const aOrder = getOrder(a);
+      const bOrder = getOrder(b);
       return aOrder - bOrder;
     });
   };
@@ -1392,6 +1497,11 @@ function wireUi(state) {
       } else if (tab.dataset.tab === "games") {
         if (el.gamesSection) el.gamesSection.classList.remove("hidden");
       }
+
+      // Reflect tab selection in the URL (only include playerCount for Community source)
+      const urlParams = { tab: currentTab, source: appState.dataSource };
+      if (appState.dataSource === 'Community') urlParams.playerCount = appState.playerCount;
+      updateUrlParams(urlParams);
     });
   });
   
@@ -1436,17 +1546,62 @@ function buildCommunityCards(yamlCards, playerCount) {
 // ========== Celestial Data ==========
 async function buildCelestialCards(yamlCards) {
   const rows = await loadCelestialSheet();
-  const cardIndex = new Map(
-    yamlCards.map((c) => [normalizeCardNameForLookup(c.name), c])
-  );
+  const cardIndex = new Map(yamlCards.map((c) => [normalizeCardNameForLookup(c.name), c]));
+
+  // Parse celestial rows to compute raw stats and games
   const { stats, totalGames, games } = parseCelestialSheet(rows, cardIndex);
+
+  // Ensure any stat entries that refer to cards not present in yamlCards
+  // are synthesized as minimal card objects so they appear in lists and
+  // are clickable in the UI. Do not mutate the original yamlCards array.
+  const mergedYaml = [...yamlCards];
+  const syntheticAdded = [];
+  for (const s of stats) {
+    const normalized = normalizeCardNameForLookup(s.name);
+    if (!cardIndex.has(normalized)) {
+      const synth = {
+        id: null,
+        name: s.name,
+        image: null,
+        imageClass: "",
+        tags: [],
+        text: "",
+        type: s.type || getCardTypeFromTags([]),
+        stats: s,
+      };
+      mergedYaml.push(synth);
+      cardIndex.set(normalized, synth);
+      syntheticAdded.push(synth);
+    }
+  }
+
+  // Rewire games so player card entries reference the cardIndex objects
+  // (this makes click/lookup consistent and allows openModal to find cards)
+  const normalizedGet = (name) => normalizeCardNameForLookup(name);
+  for (const g of games) {
+    if (!g.players) continue;
+    for (const p of g.players) {
+      if (!Array.isArray(p.cards)) continue;
+      p.cards = p.cards.map((c) => {
+        const nm = String(c?.name ?? c).trim();
+        const found = cardIndex.get(normalizedGet(nm));
+        return found || (typeof c === 'object' ? c : { name: nm, image: null });
+      });
+    }
+  }
+
   const statsIndex = new Map(stats.map((s) => [normalizeText(s.name), s]));
 
   const cards = [];
-  for (const card of yamlCards) {
+  for (const card of mergedYaml) {
     const stat = statsIndex.get(normalizeText(card.name));
     if (stat) {
-      cards.push({ ...card, stats: stat });
+      // If synthetic objects already have stats attached, prefer them
+      if (card.stats) {
+        cards.push(card);
+      } else {
+        cards.push({ ...card, stats: stat });
+      }
     }
   }
 
@@ -1461,6 +1616,10 @@ function switchDataSource(source, playerCount) {
   appState.playerCount = playerCount || appState.playerCount;
 
   let leaders, lore, games, allCards;
+  // Ensure Games tab enabled/disabled according to source
+  if (el.gamesTab) {
+    el.gamesTab.disabled = source !== 'celestial';
+  }
   if (source === "league") {
     leaders = appState.leagueCards.leaders;
     lore = appState.leagueCards.lore;
@@ -1571,9 +1730,11 @@ function wireDataSourceToggle() {
       if (value === "Community") {
         el.playerCountGroup.classList.remove("hidden");
         switchDataSource("Community", appState.playerCount);
+        updateUrlParams({ source: 'Community', playerCount: appState.playerCount });
       } else {
         el.playerCountGroup.classList.add("hidden");
         switchDataSource(value);
+        updateUrlParams({ source: value });
       }
     });
   });
@@ -1583,6 +1744,7 @@ function wireDataSourceToggle() {
       el.playerCountGroup.querySelectorAll(".ds-btn").forEach((b) => b.classList.remove("active"));
       btn.classList.add("active");
       switchDataSource("Community", btn.dataset.value);
+      updateUrlParams({ source: 'Community', playerCount: btn.dataset.value });
     });
   });
 }
@@ -1642,7 +1804,7 @@ async function main() {
   setStatus("Loading…");
   
   try {
-    const [allCards, sheetRows] = await Promise.all([loadCards(), loadSheet()]);
+    const [allCards, sheetRows] = await Promise.all([loadCards(), loadSheet(), loadLeaderFallbackNames()]);
     appState.yamlCards = allCards;
 
     const { cards } = joinCardsWithStats(allCards, sheetRows);
@@ -1693,8 +1855,10 @@ async function main() {
       el.gamesTab.disabled = true;
     }
 
-    // Ensure initial data source UI/footer is populated (show league totals)
-    switchDataSource("league");
+    // Ensure initial data source UI/footer is populated (show celestial totals)
+    switchDataSource("celestial");
+    // Reflect initial state in URL (playerCount omitted for non-Community sources)
+    updateUrlParams({ tab: 'leaders', source: 'celestial' });
     
     // Configure initial metric options for league data source
     el.metric.querySelector('option[value="winRate"]').disabled = false;
