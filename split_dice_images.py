@@ -11,7 +11,7 @@ from PIL import Image
 
 def split_dice_image(image_path, output_dir):
     """
-    Split a 3x3 dice image into 9 individual face images
+    Split a 2x7 dice image into 14 individual face images
 
     Args:
         image_path: Path to the dice image
@@ -24,8 +24,8 @@ def split_dice_image(image_path, output_dir):
     width, height = img.size
 
     # Calculate piece dimensions
-    piece_width = width // 4
-    piece_height = height // 4
+    piece_width = width // 7
+    piece_height = height // 7
 
     # Get the base filename without extension
     base_name = os.path.splitext(os.path.basename(image_path))[0]
@@ -33,9 +33,8 @@ def split_dice_image(image_path, output_dir):
     # Create output directory if it doesn't exist
     os.makedirs(output_dir, exist_ok=True)
 
-    # Split into 3x3 grid
-    for row in range(4):
-        for col in range(4):
+    for row in range(7):
+        for col in range(7):
             # Calculate crop coordinates
             left = col * piece_width
             top = row * piece_height
@@ -55,11 +54,11 @@ def split_dice_image(image_path, output_dir):
 def main():
     # Input and output directories
     input_dir = "CardImages/"
-    output_dir = "CardImages/Leaders"
+    output_dir = "CardImages"
 
     # Dice image files
     dice_files = [
-        "BtR Kit 3 TTS.jpg"
+        "Scavengers_Scouts_Court_Deck_Unofficial_art.png"
     ]
 
     print("Splitting dice images into individual faces...")
@@ -74,8 +73,8 @@ def main():
 
     print("\nDone! Check the 'dice/faces' directory for the split images.")
     print("\nNaming convention: {die_type}_r{row}_c{col}.png")
-    print("- r0 = top row, r1 = middle row, r2 = bottom row")
-    print("- c0 = left column, c1 = middle column, c2 = right column")
+    print("- r0 = top row, r1 = bottom row")
+    print("- c0-c6 = left to right columns")
 
 if __name__ == "__main__":
     main()
