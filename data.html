@@ -125,6 +125,8 @@
           <button class="tab" data-tab="lore">Lore</button>
           <button class="tab" data-tab="all">All Cards</button>
           <button class="tab" data-tab="games">Games</button>
+          <button class="tab" data-tab="leaderboard">Leaderboard</button>
+          <button class="tab" data-tab="playerStats">Player Stats</button>
         </div>
         <div class="controls">
           <button id="compareBtn" class="btn-compare">Compare</button>
@@ -296,6 +298,23 @@
 
         <section id="gamesSection" class="section hidden">
           <div id="gamesContainer" class="games-grid"></div>
+        </section>
+
+        <section id="leaderboardSection" class="section hidden">
+          <div class="container">
+            <div id="leaderboardContainer" class="leaderboard-container"></div>
+          </div>
+        </section>
+
+        <section id="playerStatsSection" class="section hidden">
+          <div class="container">
+            <div style="display: flex; gap: 16px; margin-bottom: 24px; align-items: center;">
+              <label style="font-weight: 600; color: var(--text);">Search Player:</label>
+              <input id="playerSelector" class="search" type="search" list="playerList" placeholder="Type player name..." style="max-width: 320px;" />
+              <datalist id="playerList"></datalist>
+            </div>
+            <div id="playerStatsContainer"></div>
+          </div>
         </section>
       </div>
     </main>

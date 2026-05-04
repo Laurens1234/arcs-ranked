@@ -65,6 +65,16 @@ const el = {
   pageTagline: document.getElementById("pageTagline"),
   // Games tab
   gamesTab: document.querySelector("button[data-tab='games']"),
+  // Leaderboard tab
+  leaderboardSection: document.getElementById("leaderboardSection"),
+  leaderboardContainer: document.getElementById("leaderboardContainer"),
+  leaderboardTab: document.querySelector("button[data-tab='leaderboard']"),
+  // Player Stats tab
+  playerStatsSection: document.getElementById("playerStatsSection"),
+  playerStatsContainer: document.getElementById("playerStatsContainer"),
+  playerSelector: document.getElementById("playerSelector"),
+  playerList: document.getElementById("playerList"),
+  playerStatsTab: document.querySelector("button[data-tab='playerStats']"),
 };
 
 // ========== State ==========
@@ -83,6 +93,7 @@ let appState = {
   celestialCards: null,       // { leaders, lore, others, games } from celestial data
   currentModalCard: null,     // current card in modal
   celestialGames: [],         // array of game objects for Games tab
+  leaderboardStats: [],       // array of player stats for leaderboard
 };
 
 // ========== Utilities ==========
@@ -539,6 +550,41 @@ function parseCelestialSheet(rows, cardIndex) {
   }
   
   return { stats, totalGames, games };
+}
+
+// Compute player leaderboard stats from games
+function computePlayerLeaderboardStats(games) {
+  const playerStats = new Map(); // playerName -> { wins, games, winRate }
+
+  if (!Array.isArray(games)) return [];
+
+  for (const game of games) {
+    if (!game.players || !Array.isArray(game.players)) continue;
+
+    for (const player of game.players) {
+      const name = player.name || "Unknown";
+      if (!playerStats.has(name)) {
+        playerStats.set(name, { name, wins: 0, games: 0, winRate: 0 });
+      }
+
+      const stats = playerStats.get(name);
+      stats.games++;
+      if (player.isWinner) {
+        stats.wins++;
+      }
+      stats.winRate = stats.games > 0 ? (stats.wins / stats.games) * 100 : 0;
+    }
+  }
+
+  // Convert map to array and sort
+  const result = Array.from(playerStats.values());
+  result.sort((a, b) => {
+    // Sort by wins descending, then by win rate descending
+    if (b.wins !== a.wins) return b.wins - a.wins;
+    return b.winRate - a.winRate;
+  });
+
+  return result;
 }
 
 // ========== Data Insights ==========
@@ -1287,6 +1333,259 @@ function renderGames(games, container) {
   });
 }
 
+// ========== Render Leaderboard ==========
+function renderLeaderboard(playerStats, container) {
+  if (!playerStats || playerStats.length === 0) {
+    container.innerHTML = `<div style="padding:2rem;text-align:center;color:var(--text-muted)">No leaderboard data available</div>`;
+    return;
+  }
+
+  const getMedalColor = (rank) => {
+    if (rank === 0) return { bg: 'rgb(255, 215, 0)', medal: '🥇' };
+    if (rank === 1) return { bg: 'rgb(192, 192, 192)', medal: '🥈' };
+    if (rank === 2) return { bg: 'rgb(205, 127, 50)', medal: '🥉' };
+    return { bg: 'var(--bg)', medal: '' };
+  };
+
+  const getPodiumStyle = (rank) => {
+    if (rank === 0) return 'padding: 16px; font-size: 1.2em; border-radius: 8px; order: 1;';
+    if (rank === 1) return 'padding: 12px; font-size: 1.05em; border-radius: 6px; order: 2;';
+    if (rank === 2) return 'padding: 10px; font-size: 0.95em; border-radius: 4px; order: 3;';
+    return 'padding: 8px; border-radius: 4px; order: 4;';
+  };
+
+  let html = `
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 24px; padding: 20px 0;">
+  `;
+
+  // Most Wins
+  const topWinners = [...playerStats].sort((a, b) => b.wins - a.wins);
+  html += `
+    <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px;">
+      <h3 style="margin: 0 0 16px 0; color: var(--accent);"> Most Wins</h3>
+      <div style="display: flex; flex-direction: column; gap: 8px;">
+  `;
+  topWinners.forEach((p, i) => {
+    const medal = getMedalColor(i);
+    const podiumStyle = getPodiumStyle(i);
+    const textColor = i < 3 ? 'color: black; text-shadow: 0 1px 2px rgba(255,255,255,0.3);' : '';
+    html += `
+      <div style="display: flex; justify-content: space-between; align-items: center; ${podiumStyle} background: ${medal.bg};">
+        <span style="font-weight: 700; ${textColor}">${medal.medal} ${i + 1}. ${p.name}</span>
+        <span style="font-weight: 700; ${textColor}">${p.wins} wins</span>
+      </div>
+    `;
+  });
+  html += `</div></div>`;
+
+  // Most Games Played
+  const mostGames = [...playerStats].sort((a, b) => b.games - a.games);
+  html += `
+    <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px;">
+      <h3 style="margin: 0 0 16px 0; color: var(--accent);"> Most Games Played</h3>
+      <div style="display: flex; flex-direction: column; gap: 8px;">
+  `;
+  mostGames.forEach((p, i) => {
+    const medal = getMedalColor(i);
+    const podiumStyle = getPodiumStyle(i);
+    const textColor = i < 3 ? 'color: black; text-shadow: 0 1px 2px rgba(255,255,255,0.3);' : '';
+    html += `
+      <div style="display: flex; justify-content: space-between; align-items: center; ${podiumStyle} background: ${medal.bg};">
+        <span style="font-weight: 700; ${textColor}">${medal.medal} ${i + 1}. ${p.name}</span>
+        <span style="font-weight: 700; ${textColor}">${p.games} games</span>
+      </div>
+    `;
+  });
+  html += `</div></div>`;
+
+  // Highest Win Rate
+  const highestWR = [...playerStats].filter(p => p.games >= 3).sort((a, b) => b.winRate - a.winRate);
+  html += `
+    <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px;">
+      <h3 style="margin: 0 0 16px 0; color: var(--accent);">Highest Win Rate <span style="font-size: 0.75em; color: var(--text-muted);">(min 3 games)</span></h3>
+      <div style="display: flex; flex-direction: column; gap: 8px;">
+  `;
+  highestWR.forEach((p, i) => {
+    const medal = getMedalColor(i);
+    const podiumStyle = getPodiumStyle(i);
+    const textColor = i < 3 ? 'color: black; text-shadow: 0 1px 2px rgba(255,255,255,0.3);' : '';
+    html += `
+      <div style="display: flex; justify-content: space-between; align-items: center; ${podiumStyle} background: ${medal.bg};">
+        <span style="font-weight: 700; ${textColor}">${medal.medal} ${i + 1}. ${p.name}</span>
+        <span style="font-weight: 700; ${textColor}">${p.winRate.toFixed(1)}%</span>
+      </div>
+    `;
+  });
+  html += `</div></div>`;
+
+  html += `</div>`;
+  container.innerHTML = html;
+}
+
+// ========== Player Stats ==========
+function getUniquePlayers(games) {
+  const players = new Set();
+  if (!games) return [];
+  for (const game of games) {
+    if (game.players && Array.isArray(game.players)) {
+      for (const player of game.players) {
+        if (player.name) players.add(player.name);
+      }
+    }
+  }
+  return Array.from(players).sort();
+}
+
+function computePlayerStats(playerName, games) {
+  const playerGames = [];
+  const leaderStats = {};
+  const opponentStats = {};
+  let wins = 0;
+
+  if (!games) return { playerGames, leaderStats, opponentStats, wins, winRate: 0, totalGames: 0 };
+
+  for (const game of games) {
+    if (!game.players) continue;
+    const playerInGame = game.players.find(p => p.name === playerName);
+    if (!playerInGame) continue;
+
+    playerGames.push(game);
+    if (playerInGame.isWinner) wins++;
+
+    // Track leaders/fates played (supports both prefix and card.type)
+    if (playerInGame.cards) {
+      for (const card of playerInGame.cards) {
+        const cardName = card?.name || '';
+        const cardType = normalizeText(card?.type);
+        const hasLeaderPrefix = /^leader:/i.test(cardName);
+        const hasFatePrefix = /^fate:/i.test(cardName);
+        const isLeaderOrFate = cardType === 'leader' || cardType === 'fate' || hasLeaderPrefix || hasFatePrefix;
+        if (cardName && isLeaderOrFate) {
+          leaderStats[cardName] = (leaderStats[cardName] || 0) + 1;
+        }
+      }
+    }
+
+    // Track opponents
+    for (const opponent of game.players) {
+      if (opponent.name !== playerName && opponent.name) {
+        opponentStats[opponent.name] = (opponentStats[opponent.name] || 0) + 1;
+      }
+    }
+  }
+
+  const totalGames = playerGames.length;
+  const winRate = totalGames > 0 ? ((wins / totalGames) * 100).toFixed(1) : 0;
+
+  return { playerGames, leaderStats, opponentStats, wins, winRate, totalGames };
+}
+
+function renderPlayerStats(playerName, stats, container) {
+  if (!stats || stats.totalGames === 0) {
+    container.innerHTML = `<div style="padding:2rem;text-align:center;color:var(--text-muted)">No games found for this player</div>`;
+    return;
+  }
+
+  const { leaderStats, opponentStats, wins, winRate, totalGames, playerGames } = stats;
+
+  // Sort leaders by usage
+  const topLeaders = Object.entries(leaderStats)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5);
+
+  // Sort opponents by games played
+  const topOpponents = Object.entries(opponentStats)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5);
+
+  let html = `
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 24px; margin-bottom: 32px;">
+      <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; text-align: center;">
+        <div style="font-size: 0.9rem; color: var(--text-muted); margin-bottom: 8px;">Games Played</div>
+        <div style="font-size: 2.5em; font-weight: 700; color: var(--accent);">${totalGames}</div>
+      </div>
+      <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; text-align: center;">
+        <div style="font-size: 0.9rem; color: var(--text-muted); margin-bottom: 8px;">Wins</div>
+        <div style="font-size: 2.5em; font-weight: 700; color: var(--accent);">${wins}</div>
+      </div>
+      <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; text-align: center;">
+        <div style="font-size: 0.9rem; color: var(--text-muted); margin-bottom: 8px;">Win Rate</div>
+        <div style="font-size: 2.5em; font-weight: 700; color: var(--accent);">${winRate}%</div>
+      </div>
+    </div>
+
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 24px; margin-bottom: 32px;">
+      <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px;">
+        <h4 style="margin: 0 0 16px 0; color: var(--accent);">Most Played Leaders/Fates</h4>
+        <div style="display: flex; flex-direction: column; gap: 8px;">
+  `;
+
+  if (topLeaders.length > 0) {
+    topLeaders.forEach(([leader, count]) => {
+      const percentage = ((count / totalGames) * 100).toFixed(0);
+      const leaderCard = appState.allCards.find(
+        (c) => normalizeCardNameForLookup(c.name) === normalizeCardNameForLookup(leader)
+      );
+      const leaderImgUrl = leaderCard
+        ? getImageUrl(leaderCard)
+        : getImageUrl({
+            name: leader,
+            image: null,
+            type: /^fate:/i.test(leader) ? "Fate" : "Leader",
+          });
+      html += `
+        <div style="display: flex; justify-content: space-between; align-items: center; padding: 20px 0; border-bottom: 1px solid var(--border);">
+          <span style="display:flex; align-items:center; gap:18px; min-width:0;">
+            ${leaderImgUrl ? `<img src="${leaderImgUrl}" alt="${leader}" loading="lazy" style="width:192px;height:192px;object-fit:contain;border-radius:10px;flex:0 0 auto;">` : ""}
+            <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${leader}</span>
+          </span>
+          <span style="color: var(--accent); font-weight: 600;">${count}x (${percentage}%)</span>
+        </div>
+      `;
+    });
+  } else {
+    html += `<span style="color: var(--text-muted);">No leaders played</span>`;
+  }
+
+  html += `
+        </div>
+      </div>
+
+      <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px;">
+        <h4 style="margin: 0 0 16px 0; color: var(--accent);"> Most Common Opponents</h4>
+        <div style="display: flex; flex-direction: column; gap: 8px;">
+  `;
+
+  if (topOpponents.length > 0) {
+    topOpponents.forEach(([opponent, count]) => {
+      const percentage = ((count / totalGames) * 100).toFixed(0);
+      html += `
+        <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border);">
+          <span>${opponent}</span>
+          <span style="color: var(--accent); font-weight: 600;">${count}x (${percentage}%)</span>
+        </div>
+      `;
+    });
+  } else {
+    html += `<span style="color: var(--text-muted);">No opponents</span>`;
+  }
+
+  html += `
+        </div>
+      </div>
+    </div>
+
+    <h3 style="margin: 32px 0 16px 0; color: var(--accent);"> Games</h3>
+  `;
+
+  container.innerHTML = html;
+
+  // Render games for this player
+  const gamesDiv = document.createElement('div');
+  renderGames(playerGames, gamesDiv);
+  container.appendChild(gamesDiv);
+}
+
 // ========== Modal ==========
 function openModal(card) {
   appState.currentModalCard = card;
@@ -1486,6 +1785,8 @@ function wireUi(state) {
       el.leadersSection.classList.add("hidden");
       el.loreSection.classList.add("hidden");
       if (el.gamesSection) el.gamesSection.classList.add("hidden");
+      if (el.leaderboardSection) el.leaderboardSection.classList.add("hidden");
+      if (el.playerStatsSection) el.playerStatsSection.classList.add("hidden");
       
       // Show the selected section
       if (tab.dataset.tab === "all") {
@@ -1496,6 +1797,11 @@ function wireUi(state) {
         el.loreSection.classList.remove("hidden");
       } else if (tab.dataset.tab === "games") {
         if (el.gamesSection) el.gamesSection.classList.remove("hidden");
+      } else if (tab.dataset.tab === "leaderboard") {
+        if (el.leaderboardSection) el.leaderboardSection.classList.remove("hidden");
+        renderLeaderboard(appState.leaderboardStats, el.leaderboardContainer);
+      } else if (tab.dataset.tab === "playerStats") {
+        if (el.playerStatsSection) el.playerStatsSection.classList.remove("hidden");
       }
 
       // Reflect tab selection in the URL (only include playerCount for Community source)
@@ -1521,6 +1827,30 @@ function wireUi(state) {
   // Compare mode
   el.compareBtn.addEventListener("click", toggleCompareMode);
   el.closeCompare.addEventListener("click", toggleCompareMode);
+  
+  // Player Stats search input
+  if (el.playerSelector) {
+    const handlePlayerSearch = (typedName) => {
+      const query = String(typedName ?? "").trim();
+      if (!query) {
+        el.playerStatsContainer.innerHTML = `<div style="padding:2rem;text-align:center;color:var(--text-muted)">Search a player to view their stats</div>`;
+        return;
+      }
+
+      const players = getUniquePlayers(appState.celestialGames);
+      const matchedName = players.find((p) => normalizeText(p) === normalizeText(query));
+      if (!matchedName) {
+        el.playerStatsContainer.innerHTML = `<div style="padding:2rem;text-align:center;color:var(--text-muted)">No exact player match yet. Keep typing or select from suggestions.</div>`;
+        return;
+      }
+
+      const stats = computePlayerStats(matchedName, appState.celestialGames);
+      renderPlayerStats(matchedName, stats, el.playerStatsContainer);
+    };
+
+    el.playerSelector.addEventListener("input", (e) => handlePlayerSearch(e.target.value));
+    el.playerSelector.addEventListener("change", (e) => handlePlayerSearch(e.target.value));
+  }
   
   return refreshCards;
 }
@@ -1620,11 +1950,16 @@ function switchDataSource(source, playerCount) {
   if (el.gamesTab) {
     el.gamesTab.disabled = source !== 'celestial';
   }
+  // Ensure Leaderboard tab enabled/disabled according to source
+  if (el.leaderboardTab) {
+    el.leaderboardTab.disabled = source !== 'celestial';
+  }
   if (source === "league") {
     leaders = appState.leagueCards.leaders;
     lore = appState.leagueCards.lore;
     games = null; // will be estimated by calculateInsights
     appState.celestialGames = [];
+    appState.leaderboardStats = [];
     allCards = [...leaders, ...lore];
     const totalPicks = leaders.reduce((sum, c) => sum + (c.stats?.timesPicked ?? 0), 0);
     const estimatedGames = Math.round(totalPicks / 4);
@@ -1643,6 +1978,7 @@ function switchDataSource(source, playerCount) {
     lore = appState.celestialCards.lore;
     games = appState.celestialCards.games;
     appState.celestialGames = appState.celestialCards.gamesArray || [];
+    appState.leaderboardStats = computePlayerLeaderboardStats(appState.celestialGames);
     allCards = [...leaders, ...lore, ...(appState.celestialCards.others || [])];
     if (el.dataSourceLabel) {
       el.dataSourceLabel.innerHTML = `Data from <a href="https://docs.google.com/spreadsheets/d/1yGuP7IcjnG_jbua4KH57D_68VaEhwOPhMT2yJkxG838/edit?gid=0" target="_blank">Celestial Games</a> (${games} games)`;
@@ -1661,6 +1997,7 @@ function switchDataSource(source, playerCount) {
     leaders = communityCards.filter((c) => c.stats.type === "Leader");
     lore = communityCards.filter((c) => c.stats.type === "Lore");
     appState.celestialGames = [];
+    appState.leaderboardStats = [];
     allCards = [...leaders, ...lore];
     if (el.dataSourceLabel) {
       const label = appState.playerCount === "3p" ? "3-player" : "4-player";
@@ -1703,6 +2040,21 @@ function switchDataSource(source, playerCount) {
   if (el.gamesContainer && appState.celestialGames.length > 0) {
     renderGames(appState.celestialGames, el.gamesContainer);
   }
+  
+  // Populate player suggestions for player stats tab
+  if (el.playerSelector && el.playerList) {
+    el.playerSelector.value = "";
+    el.playerList.innerHTML = "";
+    if (appState.celestialGames.length > 0) {
+      const players = getUniquePlayers(appState.celestialGames);
+      players.forEach((player) => {
+        const option = document.createElement("option");
+        option.value = player;
+        el.playerList.appendChild(option);
+      });
+    }
+  }
+  
   if (refreshCards) refreshCards();
 }
 
