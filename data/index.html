@@ -261,6 +261,24 @@
         </section>
 
         <section id="allSection" class="section hidden">
+          <!-- Filter Controls -->
+          <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; margin-bottom: 24px;">
+            <div style="display: flex; flex-wrap: wrap; gap: 16px; align-items: center;">
+              <div style="display: flex; gap: 8px; align-items: center;">
+                <label for="typeFilterSelect" style="font-weight: 600; color: var(--text); white-space: nowrap;">Card Type:</label>
+                <select id="typeFilterSelect" class="select" style="min-width: 150px;">
+                  <option value="">All Types</option>
+                </select>
+              </div>
+              <div style="display: flex; gap: 8px; align-items: center;">
+                <label for="tagFilterSelect" class="select" style="font-weight: 600; color: var(--text); white-space: nowrap;">Tags:</label>
+                <select id="tagFilterSelect" class="select" style="min-width: 150px;">
+                  <option value="">All Tags</option>
+                </select>
+              </div>
+              <button id="clearFilters" class="btn-compare" style="margin-left: auto; padding: 6px 12px; font-size: 0.9em;">Clear Filters</button>
+            </div>
+          </div>
           <!-- All Cards Insights -->
           <div class="insights-grid section-insights">
             <div class="insight-card insight-chart">

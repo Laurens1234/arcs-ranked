@@ -112,6 +112,18 @@ function normalizeCardNameForLookup(value) {
   return normalizeText(raw.replace(/^leader:\s*/i, "").replace(/^fate:\s*/i, ""));
 }
 
+function getDisplayCardName(fullName) {
+  // Don't split the special Imperial Regent / Outlaw case
+  if (/IMPERIAL REGENT\s*\/\s*OUTLAW/i.test(fullName)) {
+    return fullName;
+  }
+  // For other cards with " / ", only show the first part
+  if (fullName && fullName.includes(' / ')) {
+    return fullName.split(' / ')[0].trim();
+  }
+  return fullName;
+}
+
 let leaderYamlDocsPromise = null;
 
 async function loadLeaderYamlDocs() {
@@ -201,7 +213,8 @@ function getImageUrl(card) {
     .replace(/^leader:\s*/i, "")
     .replace(/^fate:\s*/i, "");
   // Avoid trying to fetch images for generic placeholder names like "Card"
-  if (normalizeText(lookupName) === 'card') return null;
+  const normalizedLookup = normalizeText(lookupName);
+  if (normalizedLookup === 'card' || normalizedLookup === 'cardcustom') return null;
   if (!lookupName) return null;
 
   const normalizedLookupName = normalizeCardNameForLookup(lookupName);
@@ -258,25 +271,57 @@ function toggleTheme() {
 }
 
 // ========== Data Loading ==========
-async function fetchText(url) {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
-  try {
-    const res = await fetch(url, { cache: "no-store", signal: controller.signal });
-    clearTimeout(timeoutId);
-    if (!res.ok) throw new Error(`Fetch failed ${res.status}: ${url}`);
-    const text = await res.text();
-    
-    if (text.includes("accounts.google.com") && text.includes("Sign in")) {
-      throw new Error("Google requires login. Make the sheet public.");
+async function fetchText(url, options = {}) {
+  const maxAttempts = options.attempts || 3;
+  const baseTimeout = options.timeoutMs || 20000; // 20s default
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), baseTimeout * (attempt));
+    try {
+      const res = await fetch(url, { cache: "no-store", signal: controller.signal });
+      clearTimeout(timeoutId);
+
+      if (!res.ok) {
+        // For 4xx errors, don't retry
+        if (res.status >= 400 && res.status < 500) {
+          throw new Error(`Fetch failed ${res.status}: ${url}`);
+        }
+        throw new Error(`Fetch failed ${res.status}: ${url}`);
+      }
+
+      const text = await res.text();
+
+      if (text.includes("accounts.google.com") && text.includes("Sign in")) {
+        throw new Error("Google requires login. Make the sheet public.");
+      }
+
+      return text;
+    } catch (err) {
+      clearTimeout(timeoutId);
+
+      // If aborted due to timeout
+      if (err.name === 'AbortError') {
+        console.warn(`fetchText attempt ${attempt} timed out for ${url}`);
+      } else if (err.message && err.message.includes('Google requires login')) {
+        // Do not retry if sheet is private
+        throw err;
+      } else {
+        console.warn(`fetchText attempt ${attempt} failed for ${url}:`, err.message || err);
+      }
+
+      // If last attempt, throw a clear error
+      if (attempt === maxAttempts) {
+        if (err.name === 'AbortError') {
+          throw new Error(`Fetch timed out after ${maxAttempts} attempts: ${url}`);
+        }
+        throw err;
+      }
+
+      // Backoff before retrying
+      const backoffMs = 500 * attempt;
+      await new Promise((res) => setTimeout(res, backoffMs));
     }
-    return text;
-  } catch (err) {
-    clearTimeout(timeoutId);
-    if (err.name === 'AbortError') {
-      throw new Error(`Fetch timed out: ${url}`);
-    }
-    throw err;
   }
 }
 
@@ -317,6 +362,9 @@ async function loadCards() {
     if (!c || typeof c !== "object" || !c.name) continue;
     const name = c.name ?? "";
     const normalizedName = normalizeCardNameForLookup(name);
+    // Skip placeholder cards like "card" and "CardCustom"
+    const normalizedText = normalizeText(name);
+    if (normalizedText === 'card' || normalizedText === 'cardcustom') continue;
     if (seen.has(normalizedName)) continue;
     seen.add(normalizedName);
 
@@ -369,7 +417,8 @@ function parseLeadersLoreSheet(rows) {
     if (!row) continue;
     
     const leaderName = (row[0] ?? "").trim();
-    if (leaderName) {
+    const leaderNormalized = normalizeText(leaderName);
+    if (leaderName && leaderNormalized !== 'card' && leaderNormalized !== 'cardcustom') {
       stats.push({
         name: leaderName,
         type: "Leader",
@@ -381,7 +430,8 @@ function parseLeadersLoreSheet(rows) {
     
     if (loreColIdx > 0) {
       const loreName = (row[loreColIdx] ?? "").trim();
-      if (loreName) {
+      const loreNormalized = normalizeText(loreName);
+      if (loreName && loreNormalized !== 'card' && loreNormalized !== 'cardcustom') {
         stats.push({
           name: loreName,
           type: "Lore",
@@ -448,7 +498,15 @@ function parseCelestialSheet(rows, cardIndex) {
     }
     
     const normalized = normalizeCardNameForLookup(raw);
-    const matched = cardIndex?.get(normalized);
+    let matched = cardIndex?.get(normalized);
+    
+    // If not found and the name contains " / ", try just the first part
+    if (!matched && raw.includes(' / ')) {
+      const firstPart = raw.split(' / ')[0].trim();
+      const normalizedFirstPart = normalizeCardNameForLookup(firstPart);
+      matched = cardIndex?.get(normalizedFirstPart);
+    }
+    
     if (matched) {
       return { name: matched.name, type: matched.type };
     }
@@ -461,19 +519,21 @@ function parseCelestialSheet(rows, cardIndex) {
     return { name: raw, type: "Other" };
   }
   
-  // Process each game to find winner and their cards
-  for (const [gameId, gamePlayers] of gameGroups) {
-    // Check if this is a campaign game (Act I, Act II, or Act III)
-    const firstPlayer = gamePlayers[0];
+  function processActRows(actRows, campaignId, playerOrder = null) {
+    const firstPlayer = actRows[0];
     const modeField = firstPlayer?.["Mode"] || "";
+    
+    // Determine if this is Act I, II, or III
+    const actMatch = modeField.match(/Act\s+([IVX]+)/i);
+    const actNumber = actMatch ? actMatch[1].toUpperCase() : "Unknown";
+    
+    // Find winner (highest power) - only for Act III or standalone games
+    let winner = null;
     const isActIorII = /Act\s+I+$/i.test(modeField) || /Act\s+II$/i.test(modeField);
     
-    // Find winner (highest power) - but skip for Act I and Act II campaign games
-    let winner = null;
-    let maxPower = -Infinity;
-    
     if (!isActIorII) {
-      for (const player of gamePlayers) {
+      let maxPower = -Infinity;
+      for (const player of actRows) {
         const power = parseInt(player["Power"] ?? "0", 10);
         if (power > maxPower) {
           maxPower = power;
@@ -482,7 +542,7 @@ function parseCelestialSheet(rows, cardIndex) {
       }
     }
     
-    // Extract cards from winner's JSON (only if there is a winner)
+    // Extract cards from winner's JSON
     let winnerCards = [];
     if (winner) {
       try {
@@ -492,13 +552,25 @@ function parseCelestialSheet(rows, cardIndex) {
           winnerCards = jsonData.cards ?? [];
         }
       } catch (e) {
-        console.warn(`Failed to parse JSON for game ${gameId}:`, e);
+        console.warn(`Failed to parse JSON for campaign ${campaignId}:`, e);
       }
+    }
+    
+    // Sort actRows to match playerOrder if provided (for Act II/III consistency)
+    let rowsToProcess = actRows;
+    if (playerOrder && playerOrder.length > 0) {
+      const playerNameMap = new Map();
+      for (const row of actRows) {
+        playerNameMap.set(row["Name"] || "Unknown", row);
+      }
+      rowsToProcess = playerOrder
+        .map(name => playerNameMap.get(name))
+        .filter(row => row !== undefined);
     }
     
     // Build game object with player data
     const gamePlayers_ = [];
-    for (const player of gamePlayers) {
+    for (const player of rowsToProcess) {
       let playerCards = [];
       try {
         const jsonStr = player["JSON"];
@@ -534,6 +606,8 @@ function parseCelestialSheet(rows, cardIndex) {
 
         const resolved = resolveCardFromCsvName(cardName);
         const normalized = normalizeCardNameForLookup(resolved.name);
+        const normalizedText_ = normalizeText(resolved.name);
+        if (normalizedText_ === 'card' || normalizedText_ === 'cardcustom') continue;
         if (!cardStats.has(normalized)) {
           cardStats.set(normalized, { name: resolved.name, type: resolved.type, wins: 0, timesPicked: 0 });
         }
@@ -541,13 +615,15 @@ function parseCelestialSheet(rows, cardIndex) {
       }
     }
     
-    // Winner's cards get a win (only if there is a winner)
+    // Winner's cards get a win (only if there is a winner, which is Act III or standalone)
     if (winner) {
       for (const cardName of winnerCards) {
         if (!cardName || cardName === "Deck") continue;
 
         const resolved = resolveCardFromCsvName(cardName);
         const normalized = normalizeCardNameForLookup(resolved.name);
+        const normalizedText_ = normalizeText(resolved.name);
+        if (normalizedText_ === 'card' || normalizedText_ === 'cardcustom') continue;
         if (!cardStats.has(normalized)) {
           cardStats.set(normalized, { name: resolved.name, type: resolved.type, wins: 0, timesPicked: 0 });
         }
@@ -555,81 +631,183 @@ function parseCelestialSheet(rows, cardIndex) {
       }
     }
     
-    // Skip games marked as REMOVE_REQUEST
-    if (/remove_request/i.test(modeField)) {
-      continue;
-    }
-
-    // Add to games array (include Mode for later weighting decisions)
-    totalGames++;
-    games.push({
-      gameId,
-      time: gamePlayers[0]?.["Time"] || "",
+    return {
+      actNumber,
       mode: modeField,
       players: gamePlayers_,
-    });
+      time: actRows[0]?.["Time"] || "",
+      winner
+    };
   }
   
-  // Calculate win rates and determine type
-  const stats = [];
-  for (const [normalized, data] of cardStats) {
-    const winRate = data.timesPicked > 0 ? (data.wins / data.timesPicked) * 100 : 0;
+  // Process each game group
+  for (const [gameId, gamePlayers] of gameGroups) {
+    // Skip games marked as REMOVE_REQUEST
+    const firstMode = gamePlayers[0]?.["Mode"] || "";
+    if (/remove_request/i.test(firstMode)) {
+      continue;
+    }
     
-    stats.push({
-      name: data.name,
-      type: data.type || "Other",
-      timesPicked: data.timesPicked,
-      wins: data.wins,
-      winRate: parseFloat(winRate.toFixed(2)),
-    });
+    // Check if this is a campaign game (has Act I, Act II, or Act III)
+    const actRegex = /Act\s+([IVX]+)/i;
+    const hasCampaignActs = gamePlayers.some(row => actRegex.test(row["Mode"] || ""));
+    
+    if (hasCampaignActs) {
+      // Group rows by act number
+      const actGroups = new Map();
+      for (const row of gamePlayers) {
+        const modeField = row["Mode"] || "";
+        const actMatch = modeField.match(actRegex);
+        const actKey = actMatch ? actMatch[1].toUpperCase() : "Unknown";
+        
+        if (!actGroups.has(actKey)) {
+          actGroups.set(actKey, []);
+        }
+        actGroups.get(actKey).push(row);
+      }
+      
+      // Process each act and collect them
+      const acts = [];
+      const actOrder = ["I", "II", "III"];
+      let playerOrder = null; // Extract from Act I
+      
+      for (const act of actOrder) {
+        if (actGroups.has(act)) {
+          const actRows = actGroups.get(act);
+          // Extract player order from Act I (don't use playerOrder for Act I itself)
+          if (act === "I") {
+            playerOrder = actRows.map(row => row["Name"] || "Unknown");
+            acts.push(processActRows(actRows, gameId, null));
+          } else {
+            // For Acts II and III, use the player order from Act I
+            acts.push(processActRows(actRows, gameId, playerOrder));
+          }
+        }
+      }
+      
+      // Create a campaign game object with all acts
+      if (acts.length > 0) {
+        totalGames++;
+        games.push({
+          gameId,
+          time: acts[0].time,
+          mode: "Campaign",
+          acts: acts,
+          players: acts[acts.length - 1].players, // Show final act players as main display
+          isCampaign: true
+        });
+      }
+    } else {
+      // Non-campaign game - process normally
+      const act = processActRows(gamePlayers, gameId);
+      totalGames++;
+      games.push({
+        gameId,
+        time: act.time,
+        mode: act.mode,
+        players: act.players,
+        isCampaign: false
+      });
+    }
   }
-  
-  return { stats, totalGames, games };
+
+  // Compute winRate for each card (avoid division by zero)
+  const statsArray = Array.from(cardStats.values()).map(s => ({
+    ...s,
+    winRate: (s.timesPicked && s.timesPicked > 0) ? (s.wins / s.timesPicked) * 100 : 0
+  }));
+
+  return { stats: statsArray, totalGames, games };
 }
 
 // Compute player leaderboard stats from games
 function computePlayerLeaderboardStats(games) {
-  const playerStats = new Map(); // playerName -> { wins, games, winRate }
+  // Compute combined, base-only, and campaign-only leaderboards.
+  // Return combined array for backward compatibility and store breakdown on appState.
+
+  const combinedMap = new Map();
+  const baseMap = new Map();
+  const campaignMap = new Map();
 
   if (!Array.isArray(games)) return [];
 
-  for (const game of games) {
-    if (!game.players || !Array.isArray(game.players)) continue;
-    // Determine weight for this game:
-    // - If the game has a winner -> weight = 1
-    // - Else if it's a campaign Act (players have objective) -> weight = 0.33
-    // - Otherwise -> weight = 0 (do not count)
+  const processNonCampaign = (game, map) => {
+    if (!game.players || !Array.isArray(game.players)) return;
     const hasWinner = game.players.some((p) => p.isWinner);
-    // Only count Act III campaign games fractionally (Act I/II should not be counted)
     const isActIII = /Act\s+III/i.test(game.mode || "");
     const weight = hasWinner ? 1 : (isActIII ? 0.33 : 0);
 
-    if (weight <= 0) continue; // nothing to count for this game
-
     for (const player of game.players) {
       const name = player.name || "Unknown";
-      if (!playerStats.has(name)) {
-        playerStats.set(name, { name, wins: 0, games: 0, winRate: 0 });
-      }
+      if (!map.has(name)) map.set(name, { name, wins: 0, games: 0, weightedGames: 0 });
+      const s = map.get(name);
+      s.games += 1;
+      s.weightedGames += weight;
+      if (hasWinner && player.isWinner) s.wins++;
+    }
+  };
 
-      const stats = playerStats.get(name);
-      stats.games += weight;
-      if (hasWinner && player.isWinner) {
-        stats.wins++;
+  const processCampaignActs = (game, map) => {
+    if (!game.acts || !Array.isArray(game.acts)) return;
+    // For leaderboard games count, treat the whole campaign as a single game.
+    // But for weightedGames and wins, accumulate across acts to preserve WR calculation.
+    // Build per-player aggregates for this campaign first.
+    const perPlayer = new Map();
+    for (const act of game.acts) {
+      if (!act.players || !Array.isArray(act.players)) continue;
+      const hasWinner = act.players.some((p) => p.isWinner);
+      const isActIII = /Act\s+III/i.test(act.mode || "");
+      const weight = hasWinner ? 1 : (isActIII ? 0.33 : 0);
+
+      for (const player of act.players) {
+        const name = player.name || "Unknown";
+        if (!perPlayer.has(name)) perPlayer.set(name, { name, wins: 0, weightedGames: 0 });
+        const agg = perPlayer.get(name);
+        agg.weightedGames += weight;
+        if (hasWinner && player.isWinner) agg.wins += 1;
       }
-      stats.winRate = stats.games > 0 ? (stats.wins / stats.games) * 100 : 0;
+    }
+
+    // Now apply the aggregates: each player gets +1 `games` for the campaign,
+    // plus the summed weightedGames and wins from acts.
+    for (const [name, agg] of perPlayer.entries()) {
+      if (!map.has(name)) map.set(name, { name, wins: 0, games: 0, weightedGames: 0 });
+      const s = map.get(name);
+      s.games += 1; // campaign counted as single game
+      s.weightedGames += agg.weightedGames;
+      s.wins += agg.wins;
+    }
+  };
+
+  for (const game of games) {
+    if (game.isCampaign && game.acts && game.acts.length > 0) {
+      // campaign: update campaignMap and combinedMap
+      processCampaignActs(game, campaignMap);
+      processCampaignActs(game, combinedMap);
+    } else {
+      // non-campaign: update baseMap and combinedMap
+      processNonCampaign(game, baseMap);
+      processNonCampaign(game, combinedMap);
     }
   }
 
-  // Convert map to array and sort
-  const result = Array.from(playerStats.values());
-  result.sort((a, b) => {
-    // Sort by wins descending, then by win rate descending
-    if (b.wins !== a.wins) return b.wins - a.wins;
-    return b.winRate - a.winRate;
-  });
+  const finalize = (map) => {
+    const arr = Array.from(map.values()).map(s => ({ ...s, winRate: s.weightedGames > 0 ? (s.wins / s.weightedGames) * 100 : 0 }));
+    arr.sort((a, b) => {
+      if (b.wins !== a.wins) return b.wins - a.wins;
+      return b.winRate - a.winRate;
+    });
+    return arr;
+  };
 
-  return result;
+  const combined = finalize(combinedMap);
+  const base = finalize(baseMap);
+  const campaign = finalize(campaignMap);
+
+  // Save breakdown to appState for UI to pick from
+  try { appState.leaderboardBreakdown = { combined, base, campaign }; } catch (e) { /* ignore */ }
+
+  return combined;
 }
 
 // ========== Data Insights ==========
@@ -1227,7 +1405,10 @@ function sortCards(cards, metric) {
 
 function matchesFilter(card, query) {
   if (!query) return true;
-  return normalizeText(card.name).includes(normalizeText(query));
+  // Filter out placeholder cards
+  const normalizedCardName = normalizeText(card.name);
+  if (normalizedCardName === 'card' || normalizedCardName === 'cardcustom') return false;
+  return normalizedCardName.includes(normalizeText(query));
 }
 
 function createCardElement(card, rank, metric) {
@@ -1287,7 +1468,7 @@ function createCardElement(card, rank, metric) {
       ${imgUrl ? `<img src="${imgUrl}" alt="${card.name}" loading="lazy" ${isRotated ? 'class="rotated"' : ''}>` : ""}
     </div>
     <div class="card-info">
-      <div class="card-name">${card.name}</div>
+      <div class="card-name">${getDisplayCardName(card.name)}</div>
       <div class="card-stats">
         ${statsHtml}
       </div>
@@ -1323,16 +1504,36 @@ function renderGames(games, container) {
     return;
   }
   
+  // Helper function to get color for each act
+  const getActColor = (actNumber) => {
+    const colors = {
+      "I": "#3b82f6",      // Blue
+      "II": "#8b5cf6",     // Purple
+      "III": "#ef4444"     // Red
+    };
+    return colors[actNumber] || "var(--accent)";
+  };
+  
   const sortPlayerCards = (cards) => {
     return [...cards].sort((a, b) => {
       const getOrder = (card) => {
         const rawName = String(card?.name ?? "").trim();
         const typeNorm = normalizeText(card?.type);
-        // Leader or Fate first
+        const nameNorm = normalizeText(rawName);
+        
+        // Leader or Fate first (order 0)
         if (typeNorm === 'leader' || typeNorm === 'fate' || /^leader:/i.test(rawName) || /^fate:/i.test(rawName)) return 0;
-        // Lore next
-        if (typeNorm === 'lore' || /^lore:/i.test(rawName)) return 1;
-        return 2;
+        
+        // Imperial Regent or Outlaw second (order 1)
+        if (nameNorm === 'imperial regent' || nameNorm === 'outlaw') return 1;
+        
+        // First Regent third (order 2)
+        if (nameNorm === 'first regent') return 2;
+        
+        // Lore next (order 3)
+        if (typeNorm === 'lore' || /^lore:/i.test(rawName)) return 3;
+        
+        return 4;
       };
 
       const aOrder = getOrder(a);
@@ -1342,24 +1543,28 @@ function renderGames(games, container) {
   };
   
   container.innerHTML = games.map((game, idx) => {
-    const playerRows = game.players.map(p => {
-      const sortedCards = sortPlayerCards(p.cards);
-        const cardImages = sortedCards.length > 0 
-        ? sortedCards.map(card => {
-            const imgUrl = getImageUrl(card);
-            const isRotated = normalizeText(card.imageClass) === "rotated";
-            const nameNorm = normalizeText(card.name || '');
-            // Do not show placeholder or image for generic 'Card' entries
-            if (nameNorm === 'card') return '';
-            return imgUrl 
-              ? `<img src="${imgUrl}" alt="${card.name}" data-card="${card.name}" class="game-card-image ${isRotated ? 'rotated' : ''}" loading="lazy" style="cursor: pointer;">` 
-              : `<span class="game-card-placeholder" data-card="${card.name}" style="cursor: pointer;">${card.name}</span>`;
-          }).join("")
-        : '<span style="color:var(--text-muted);font-size:0.9rem">No cards</span>';
-      
-      const playerColor = getPlayerColorHex(p.color);
-      return `<div class="game-player ${p.isWinner ? "game-winner" : ""}"><div class="game-player-header"><span class="game-player-name player-link" data-player="${(p.name || "Unknown").replace(/"/g, '&quot;')}" style="cursor:pointer;color:${playerColor};">${p.name || "Unknown"}</span><span class="game-player-color" style="color:${playerColor}">●</span><span class="game-player-power">${p.power} Power</span>${p.objective !== undefined ? `<span class="game-player-objective" style="font-size:0.85rem;color: ${p.campaignResult === 'success' ? 'var(--color-success, #4ade80)' : 'var(--color-failure, #f87171)'};margin-left:0.5rem">Obj: ${p.objective} ${p.campaignResult === 'success' ? '✓' : '✗'}</span>` : ''}${p.isWinner ? '<span class="game-winner-badge">🏆 Winner</span>' : ''}</div><div class="game-player-cards">${cardImages}</div></div>`;
-    }).join("");
+    // Helper function to render player rows for a given set of players
+    const renderPlayerRows = (players) => {
+      return players.map(p => {
+        const sortedCards = sortPlayerCards(p.cards);
+          const cardImages = sortedCards.length > 0 
+          ? sortedCards.map(card => {
+              const imgUrl = getImageUrl(card);
+              const isRotated = normalizeText(card.imageClass) === "rotated";
+              const nameNorm = normalizeText(card.name || '');
+              // Do not show placeholder or image for generic 'Card' or 'CardCustom' entries
+              if (nameNorm === 'card' || nameNorm === 'cardcustom') return '';
+              const displayName = getDisplayCardName(card.name);
+              return imgUrl 
+                ? `<img src="${imgUrl}" alt="${displayName}" data-card="${card.name}" class="game-card-image ${isRotated ? 'rotated' : ''}" loading="lazy" style="cursor: pointer;">` 
+                : `<span class="game-card-placeholder" data-card="${card.name}" style="cursor: pointer;">${getDisplayCardName(card.name)}</span>`;
+            }).join("")
+          : '<span style="color:var(--text-muted);font-size:0.9rem">No cards</span>';
+        
+        const playerColor = getPlayerColorHex(p.color);
+        return `<div class="game-player ${p.isWinner ? "game-winner" : ""}"><div class="game-player-header"><span class="game-player-name player-link" data-player="${(p.name || "Unknown").replace(/"/g, '&quot;')}" style="cursor:pointer;color:${playerColor};">${p.name || "Unknown"}</span><span class="game-player-color" style="color:${playerColor}">●</span><span class="game-player-power">${p.power} Power</span>${p.objective !== undefined ? `<span class="game-player-objective" style="font-size:0.85rem;color: ${p.campaignResult === 'success' ? 'var(--color-success, #4ade80)' : 'var(--color-failure, #f87171)'};margin-left:0.5rem">Obj: ${p.objective} ${p.campaignResult === 'success' ? '✓' : '✗'}</span>` : ''}${p.isWinner ? '<span class="game-winner-badge">🏆 Winner</span>' : ''}</div><div class="game-player-cards">${cardImages}</div></div>`;
+      }).join("");
+    };
     
     // Format date in international order (DD-MM-YYYY)
     let formattedDate = "—";
@@ -1369,7 +1574,33 @@ function renderGames(games, container) {
       formattedDate = `${day.padStart(2, "0")}-${month.padStart(2, "0")}-${year}`;
     }
     
-    return `<div class="game-card" style="transition:all 0.2s;"><div class="game-header"><h3 class="game-title">Game ${game.gameId}</h3><span class="game-timestamp">${formattedDate}</span></div><div class="game-players">${playerRows}</div></div>`;
+    // Handle campaign games with multiple acts
+    if (game.isCampaign && game.acts && game.acts.length > 0) {
+      const actsHtml = game.acts.map(act => {
+        const actColor = getActColor(act.actNumber);
+        const actPlayerRows = renderPlayerRows(act.players);
+        // Format act date (DD-MM-YYYY)
+        let actDate = "—";
+        if (act.time) {
+          const datePart = (act.time + "").split(" ")[0];
+          const [month, day, year] = datePart.split("/");
+          if (month && day && year) actDate = `${day.padStart(2, "0")}-${month.padStart(2, "0")}-${year}`;
+        }
+        return `<div style="border-left: 4px solid ${actColor}; padding-left: 1rem; margin-bottom: 1rem;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.25rem;">
+            <h4 style="margin: 0; color: ${actColor};">Act ${act.actNumber}</h4>
+            <span style="color:${actColor}; font-size:0.9rem;">${actDate}</span>
+          </div>
+          <div class="game-players">${actPlayerRows}</div>
+        </div>`;
+      }).join("");
+      
+      return `<div class="game-card" style="transition:all 0.2s;"><div class="game-header"><h3 class="game-title">Campaign ${game.gameId}</h3></div><div style="padding: 1rem;">${actsHtml}</div></div>`;
+    } else {
+      // Non-campaign game
+      const playerRows = renderPlayerRows(game.players);
+      return `<div class="game-card" style="transition:all 0.2s;"><div class="game-header"><h3 class="game-title">Game ${game.gameId}</h3><span class="game-timestamp">${formattedDate}</span></div><div class="game-players">${playerRows}</div></div>`;
+    }
   }).join("");
   
   // Add click handlers to cards, player names, and game cards
@@ -1405,93 +1636,146 @@ function renderLeaderboard(playerStats, container) {
     return;
   }
 
-  const getMedalColor = (rank) => {
-    if (rank === 0) return { bg: 'rgb(255, 215, 0)', medal: '🥇' };
-    if (rank === 1) return { bg: 'rgb(192, 192, 192)', medal: '🥈' };
-    if (rank === 2) return { bg: 'rgb(205, 127, 50)', medal: '🥉' };
-    return { bg: 'var(--bg)', medal: '' };
-  };
+  const breakdown = appState.leaderboardBreakdown || null;
 
-  const getPodiumStyle = (rank) => {
-    if (rank === 0) return 'padding: 16px; font-size: 1.2em; border-radius: 8px; order: 1;';
-    if (rank === 1) return 'padding: 12px; font-size: 1.05em; border-radius: 6px; order: 2;';
-    if (rank === 2) return 'padding: 10px; font-size: 0.95em; border-radius: 4px; order: 3;';
-    return 'padding: 8px; border-radius: 4px; order: 4;';
-  };
+  const buildContent = (statsArray) => {
+    const getMedalColor = (rank) => {
+      if (rank === 0) return { bg: 'rgb(255, 215, 0)', medal: '🥇' };
+      if (rank === 1) return { bg: 'rgb(192, 192, 192)', medal: '🥈' };
+      if (rank === 2) return { bg: 'rgb(205, 127, 50)', medal: '🥉' };
+      return { bg: 'var(--bg)', medal: '' };
+    };
 
-  let html = `
-    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 24px; padding: 20px 0;">
-  `;
+    const getPodiumStyle = (rank) => {
+      if (rank === 0) return 'padding: 16px; font-size: 1.2em; border-radius: 8px; order: 1;';
+      if (rank === 1) return 'padding: 12px; font-size: 1.05em; border-radius: 6px; order: 2;';
+      if (rank === 2) return 'padding: 10px; font-size: 0.95em; border-radius: 4px; order: 3;';
+      return 'padding: 8px; border-radius: 4px; order: 4;';
+    };
 
-  // Most Wins
-  const topWinners = [...playerStats].sort((a, b) => b.wins - a.wins);
-  html += `
-    <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px;">
-      <h3 style="margin: 0 0 16px 0; color: var(--accent);"> Most Wins</h3>
-      <div style="display: flex; flex-direction: column; gap: 8px;">
-  `;
-  topWinners.forEach((p, i) => {
-    const medal = getMedalColor(i);
-    const podiumStyle = getPodiumStyle(i);
-    const textColor = i < 3 ? 'color: black; text-shadow: 0 1px 2px rgba(255,255,255,0.3);' : '';
-    html += `
-      <div style="display: flex; justify-content: space-between; align-items: center; ${podiumStyle} background: ${medal.bg};">
-        <span style="font-weight: 700; ${textColor}"><span class="leaderboard-player-name player-link" data-player="${(p.name).replace(/"/g, '&quot;')}" style="cursor:pointer;">${medal.medal} ${i + 1}. ${p.name}</span></span>
-        <span style="font-weight: 700; ${textColor}">${p.wins} wins</span>
-      </div>
+    let html = `
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 24px; padding: 20px 0;">
     `;
-  });
-  html += `</div></div>`;
 
-  // Most Games Played
-  const mostGames = [...playerStats].sort((a, b) => b.games - a.games);
-  html += `
-    <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px;">
-      <h3 style="margin: 0 0 16px 0; color: var(--accent);"> Most Games Played</h3>
-      <div style="display: flex; flex-direction: column; gap: 8px;">
-  `;
-  mostGames.forEach((p, i) => {
-    const medal = getMedalColor(i);
-    const podiumStyle = getPodiumStyle(i);
-    const textColor = i < 3 ? 'color: black; text-shadow: 0 1px 2px rgba(255,255,255,0.3);' : '';
+    // Most Wins - only include players with at least one win
+    const topWinners = [...statsArray].filter(p => p.wins && p.wins > 0).sort((a, b) => b.wins - a.wins);
     html += `
-      <div style="display: flex; justify-content: space-between; align-items: center; ${podiumStyle} background: ${medal.bg};">
-        <span style="font-weight: 700; ${textColor}"><span class="leaderboard-player-name player-link" data-player="${(p.name).replace(/"/g, '&quot;')}" style="cursor:pointer;">${medal.medal} ${i + 1}. ${p.name}</span></span>
-        <span style="font-weight: 700; ${textColor}">${p.games} games</span>
-      </div>
+      <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px;">
+        <h3 style="margin: 0 0 16px 0; color: var(--accent);"> Most Wins</h3>
+        <div style="display: flex; flex-direction: column; gap: 8px;">
     `;
-  });
-  html += `</div></div>`;
+    if (topWinners.length === 0) {
+      html += `<div style="color:var(--text-muted); padding:12px;">No players with wins yet</div>`;
+    } else {
+      topWinners.forEach((p, i) => {
+        const medal = getMedalColor(i);
+        const podiumStyle = getPodiumStyle(i);
+        const textColor = i < 3 ? 'color: black; text-shadow: 0 1px 2px rgba(255,255,255,0.3);' : '';
+        html += `
+          <div style="display: flex; justify-content: space-between; align-items: center; ${podiumStyle} background: ${medal.bg};">
+            <span style="font-weight: 700; ${textColor}"><span class="leaderboard-player-name player-link" data-player="${(p.name).replace(/"/g, '&quot;')}" style="cursor:pointer;">${medal.medal} ${i + 1}. ${p.name}</span></span>
+            <span style="font-weight: 700; ${textColor}">${p.wins} wins</span>
+          </div>
+        `;
+      });
+    }
+    html += `</div></div>`;
 
-  // Highest Win Rate
-  const highestWR = [...playerStats].filter(p => p.games >= 3).sort((a, b) => b.winRate - a.winRate);
-  html += `
-    <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px;">
-      <h3 style="margin: 0 0 16px 0; color: var(--accent);">Highest Win Rate <span style="font-size: 0.75em; color: var(--text-muted);">(min 3 games)</span></h3>
-      <div style="display: flex; flex-direction: column; gap: 8px;">
-  `;
-  highestWR.forEach((p, i) => {
-    const medal = getMedalColor(i);
-    const podiumStyle = getPodiumStyle(i);
-    const textColor = i < 3 ? 'color: black; text-shadow: 0 1px 2px rgba(255,255,255,0.3);' : '';
+    // Most Games Played
+    const mostGames = [...statsArray].sort((a, b) => b.games - a.games);
     html += `
-      <div style="display: flex; justify-content: space-between; align-items: center; ${podiumStyle} background: ${medal.bg};">
-        <span style="font-weight: 700; ${textColor}"><span class="leaderboard-player-name player-link" data-player="${(p.name).replace(/"/g, '&quot;')}" style="cursor:pointer;">${medal.medal} ${i + 1}. ${p.name}</span></span>
-        <span style="font-weight: 700; ${textColor}">${p.winRate.toFixed(1)}%</span>
-      </div>
+      <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px;">
+        <h3 style="margin: 0 0 16px 0; color: var(--accent);"> Most Games Played</h3>
+        <div style="display: flex; flex-direction: column; gap: 8px;">
     `;
-  });
-  html += `</div></div>`;
-
-  html += `</div>`;
-  container.innerHTML = html;
-  
-  // Add click handlers to player names
-  container.querySelectorAll(".leaderboard-player-name").forEach(elem => {
-    elem.addEventListener("click", () => {
-      const playerName = elem.dataset.player;
-      showPlayerProfile(playerName);
+    mostGames.forEach((p, i) => {
+      const medal = getMedalColor(i);
+      const podiumStyle = getPodiumStyle(i);
+      const textColor = i < 3 ? 'color: black; text-shadow: 0 1px 2px rgba(255,255,255,0.3);' : '';
+      html += `
+        <div style="display: flex; justify-content: space-between; align-items: center; ${podiumStyle} background: ${medal.bg};">
+          <span style="font-weight: 700; ${textColor}"><span class="leaderboard-player-name player-link" data-player="${(p.name).replace(/"/g, '&quot;')}" style="cursor:pointer;">${medal.medal} ${i + 1}. ${p.name}</span></span>
+          <span style="font-weight: 700; ${textColor}">${p.games} games</span>
+        </div>
+      `;
     });
+    html += `</div></div>`;
+
+    // Highest Win Rate
+    const highestWR = [...statsArray].filter(p => p.games >= 3).sort((a, b) => b.winRate - a.winRate);
+    html += `
+      <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px;">
+        <h3 style="margin: 0 0 16px 0; color: var(--accent);">Highest Win Rate <span style="font-size: 0.75em; color: var(--text-muted);">(min 3 games)</span></h3>
+        <div style="display: flex; flex-direction: column; gap: 8px;">
+    `;
+    highestWR.forEach((p, i) => {
+      const medal = getMedalColor(i);
+      const podiumStyle = getPodiumStyle(i);
+      const textColor = i < 3 ? 'color: black; text-shadow: 0 1px 2px rgba(255,255,255,0.3);' : '';
+      const denom = (p.weightedGames !== undefined && p.weightedGames !== null) ? p.weightedGames : p.games;
+      const denomDisplay = Number.isInteger(denom) ? String(denom) : denom.toFixed(2);
+      html += `
+        <div style="display: flex; justify-content: space-between; align-items: center; ${podiumStyle} background: ${medal.bg};">
+          <span style="font-weight: 700; ${textColor}"><span class="leaderboard-player-name player-link" data-player="${(p.name).replace(/"/g, '&quot;')}" style="cursor:pointer;">${medal.medal} ${i + 1}. ${p.name}</span></span>
+          <span style="font-weight: 700; ${textColor}">${p.wins}/${denomDisplay} • ${p.winRate.toFixed(1)}%</span>
+        </div>
+      `;
+    });
+    html += `</div></div>`;
+
+    html += `</div>`;
+    return html;
+  };
+
+  // If breakdown exists, render a selector and allow toggling between combined/base/campaign
+  if (breakdown) {
+    const selectorHtml = `
+      <style>
+        .lb-view-btn { padding:8px 12px; border-radius:8px; border:1px solid rgba(0,0,0,0.06); background:var(--bg-card); cursor:pointer; font-weight:600; color:var(--text); }
+        .lb-view-btn.active { background:var(--accent); color:#fff; box-shadow:0 6px 18px rgba(0,0,0,0.08); transform:translateY(-1px); }
+        .lb-view-btn:hover { opacity:0.95; transform:translateY(-1px); }
+        .lb-view-btn:focus { outline:2px solid rgba(0,0,0,0.06); }
+      </style>
+      <div style="margin-bottom:12px; display:flex; gap:8px; align-items:center;">
+        <button class="lb-view-btn active" data-view="combined">All</button>
+        <button class="lb-view-btn" data-view="base">Base</button>
+        <button class="lb-view-btn" data-view="campaign">Campaign</button>
+      </div>
+    `;
+
+    container.innerHTML = selectorHtml + `<div class="leaderboard-content">` + buildContent(breakdown.combined) + `</div>`;
+
+    // attach selector handlers
+    container.querySelectorAll('.lb-view-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        container.querySelectorAll('.lb-view-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        const view = btn.dataset.view;
+        const contentDiv = container.querySelector('.leaderboard-content');
+        if (!contentDiv) return;
+        if (view === 'base') contentDiv.innerHTML = buildContent(breakdown.base);
+        else if (view === 'campaign') contentDiv.innerHTML = buildContent(breakdown.campaign);
+        else contentDiv.innerHTML = buildContent(breakdown.combined);
+
+        // rewire player name click handlers inside updated content
+        contentDiv.querySelectorAll('.leaderboard-player-name').forEach(elem => {
+          elem.addEventListener('click', () => showPlayerProfile(elem.dataset.player));
+        });
+      });
+    });
+
+    // initial wiring
+    container.querySelectorAll('.leaderboard-player-name').forEach(elem => {
+      elem.addEventListener('click', () => showPlayerProfile(elem.dataset.player));
+    });
+
+    return;
+  }
+
+  // Fallback: render using provided playerStats array
+  container.innerHTML = buildContent(playerStats);
+  container.querySelectorAll('.leaderboard-player-name').forEach(elem => {
+    elem.addEventListener('click', () => showPlayerProfile(elem.dataset.player));
   });
 }
 
@@ -1511,6 +1795,7 @@ function getUniquePlayers(games) {
 
 function computePlayerStats(playerName, games) {
   const playerGames = [];
+  const campaignActsByGameId = {}; // Collect acts for each campaign
   const leaderStats = {};
   const opponentStats = {};
   let wins = 0;
@@ -1519,41 +1804,109 @@ function computePlayerStats(playerName, games) {
   if (!games) return { playerGames, leaderStats, opponentStats, wins, winRate: 0, totalGames: 0, countedGames: 0 };
 
   for (const game of games) {
-    if (!game.players) continue;
-    const playerInGame = game.players.find(p => p.name === playerName);
-    if (!playerInGame) continue;
+    // Handle campaign games with multiple acts
+    if (game.isCampaign && game.acts && game.acts.length > 0) {
+      // Collect acts for this campaign that the player participated in
+      const playerActs = [];
+      
+      for (const act of game.acts) {
+        const playerInGame = act.players.find(p => p.name === playerName);
+        if (!playerInGame) continue;
 
-    playerGames.push(game);
-    // Determine weight for win-rate counting: winner=1, campaign act=0.33, otherwise=0
-    const hasWinner = game.players.some(p => p.isWinner);
-    // Only count Act III campaign games fractionally (Act I/II should not be counted)
-    const isActIII = /Act\s+III/i.test(game.mode || "");
-    const weight = hasWinner ? 1 : (isActIII ? 0.33 : 0);
-    if (weight > 0) {
-      countedGames += weight;
-      if (hasWinner && playerInGame.isWinner) wins++;
-    }
+        playerActs.push(act);
+        
+        // Determine weight for win-rate counting
+        const hasWinner = act.players.some(p => p.isWinner);
+        const isActIII = /Act\s+III/i.test(act.mode || "");
+        const weight = hasWinner ? 1 : (isActIII ? 0.33 : 0);
+        if (weight > 0) {
+          countedGames += weight;
+          if (hasWinner && playerInGame.isWinner) wins++;
+        }
 
-    // Track leaders/fates played (supports both prefix and card.type)
-    if (playerInGame.cards) {
-      for (const card of playerInGame.cards) {
-        const cardName = card?.name || '';
-        const cardType = normalizeText(card?.type);
-        const hasLeaderPrefix = /^leader:/i.test(cardName);
-        const hasFatePrefix = /^fate:/i.test(cardName);
-        const isLeaderOrFate = cardType === 'leader' || cardType === 'fate' || hasLeaderPrefix || hasFatePrefix;
-        if (cardName && isLeaderOrFate) {
-          leaderStats[cardName] = (leaderStats[cardName] || 0) + 1;
+        // Track leaders/fates played
+        if (playerInGame.cards) {
+          for (const card of playerInGame.cards) {
+            const cardName = card?.name || '';
+            const cardType = normalizeText(card?.type);
+            const hasLeaderPrefix = /^leader:/i.test(cardName);
+            const hasFatePrefix = /^fate:/i.test(cardName);
+            const isLeaderOrFate = cardType === 'leader' || cardType === 'fate' || hasLeaderPrefix || hasFatePrefix;
+            const normalizedCardName = normalizeText(cardName);
+            if (normalizedCardName === 'card' || normalizedCardName === 'cardcustom') continue;
+            if (cardName && isLeaderOrFate) {
+              leaderStats[cardName] = (leaderStats[cardName] || 0) + 1;
+            }
+          }
+        }
+
+        // Track opponents
+        for (const opponent of act.players) {
+          if (opponent.name !== playerName && opponent.name) {
+            opponentStats[opponent.name] = (opponentStats[opponent.name] || 0) + 1;
+          }
+        }
+      }
+      
+      // If player was in any acts of this campaign, store them for later reconstruction
+      if (playerActs.length > 0) {
+        campaignActsByGameId[game.gameId] = {
+          gameId: game.gameId,
+          time: game.time,
+          acts: playerActs
+        };
+      }
+    } else {
+      // Non-campaign game
+      if (!game.players) continue;
+      const playerInGame = game.players.find(p => p.name === playerName);
+      if (!playerInGame) continue;
+
+      playerGames.push(game);
+      const hasWinner = game.players.some(p => p.isWinner);
+      const isActIII = /Act\s+III/i.test(game.mode || "");
+      const weight = hasWinner ? 1 : (isActIII ? 0.33 : 0);
+      if (weight > 0) {
+        countedGames += weight;
+        if (hasWinner && playerInGame.isWinner) wins++;
+      }
+
+      // Track leaders/fates played
+      if (playerInGame.cards) {
+        for (const card of playerInGame.cards) {
+          const cardName = card?.name || '';
+          const cardType = normalizeText(card?.type);
+          const hasLeaderPrefix = /^leader:/i.test(cardName);
+          const hasFatePrefix = /^fate:/i.test(cardName);
+          const isLeaderOrFate = cardType === 'leader' || cardType === 'fate' || hasLeaderPrefix || hasFatePrefix;
+          const normalizedCardName = normalizeText(cardName);
+          if (normalizedCardName === 'card' || normalizedCardName === 'cardcustom') continue;
+          if (cardName && isLeaderOrFate) {
+            leaderStats[cardName] = (leaderStats[cardName] || 0) + 1;
+          }
+        }
+      }
+
+      // Track opponents
+      for (const opponent of game.players) {
+        if (opponent.name !== playerName && opponent.name) {
+          opponentStats[opponent.name] = (opponentStats[opponent.name] || 0) + 1;
         }
       }
     }
+  }
 
-    // Track opponents
-    for (const opponent of game.players) {
-      if (opponent.name !== playerName && opponent.name) {
-        opponentStats[opponent.name] = (opponentStats[opponent.name] || 0) + 1;
-      }
-    }
+  // Add reconstructed campaigns to playerGames
+  for (const gameId in campaignActsByGameId) {
+    const campaignData = campaignActsByGameId[gameId];
+    playerGames.push({
+      gameId: campaignData.gameId,
+      time: campaignData.time,
+      mode: "Campaign",
+      acts: campaignData.acts,
+      players: campaignData.acts[campaignData.acts.length - 1].players,
+      isCampaign: true
+    });
   }
 
   const totalGames = playerGames.length;
@@ -1605,9 +1958,18 @@ function renderPlayerStats(playerName, stats, container) {
   if (topLeaders.length > 0) {
     topLeaders.forEach(([leader, count]) => {
       // percentage removed by request; show raw counts only
-      const leaderCard = appState.allCards.find(
+      let leaderCard = appState.allCards.find(
         (c) => normalizeCardNameForLookup(c.name) === normalizeCardNameForLookup(leader)
       );
+      
+      // If not found and the leader name contains " / ", try just the first part
+      if (!leaderCard && leader.includes(' / ')) {
+        const firstPart = leader.split(' / ')[0].trim();
+        leaderCard = appState.allCards.find(
+          (c) => normalizeCardNameForLookup(c.name) === normalizeCardNameForLookup(firstPart)
+        );
+      }
+      
       const leaderImgUrl = leaderCard
         ? getImageUrl(leaderCard)
         : getImageUrl({
@@ -1615,11 +1977,12 @@ function renderPlayerStats(playerName, stats, container) {
             image: null,
             type: /^fate:/i.test(leader) ? "Fate" : "Leader",
           });
+      const leaderDisplayName = getDisplayCardName(leader);
       html += `
-        <div style="display: flex; justify-content: space-between; align-items: center; padding: 20px 0; border-bottom: 1px solid var(--border);">
+        <div style="display: flex; justify-content: space-between; align-items: center; padding: 20px 0; border-bottom: 1px solid var(--border); cursor: pointer;" data-card="${leader.replace(/"/g, '&quot;')}">
           <span style="display:flex; align-items:center; gap:18px; min-width:0;">
-            ${leaderImgUrl ? `<img src="${leaderImgUrl}" alt="${leader}" loading="lazy" style="width:192px;height:192px;object-fit:contain;border-radius:10px;flex:0 0 auto;">` : ""}
-            <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${leader}</span>
+            ${leaderImgUrl ? `<img src="${leaderImgUrl}" alt="${leaderDisplayName}" loading="lazy" style="width:192px;height:192px;object-fit:contain;border-radius:10px;flex:0 0 auto; pointer-events: none;">` : ""}
+            <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${leaderDisplayName}</span>
           </span>
           <span style="color: var(--accent); font-weight: 600;">${count}x</span>
         </div>
@@ -1641,8 +2004,8 @@ function renderPlayerStats(playerName, stats, container) {
   if (topOpponents.length > 0) {
     topOpponents.forEach(([opponent, count]) => {
       html += `
-        <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border);">
-          <span>${opponent}</span>
+        <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border); cursor: pointer;" data-player="${opponent.replace(/"/g, '&quot;')}">
+          <span style="cursor: pointer;">${opponent}</span>
           <span style="color: var(--accent); font-weight: 600;">${count}x</span>
         </div>
       `;
@@ -1671,14 +2034,15 @@ function renderPlayerStats(playerName, stats, container) {
 function openModal(card) {
   appState.currentModalCard = card;
   const imgUrl = getImageUrl(card);
+  const displayName = getDisplayCardName(card.name);
   
   // Update page title and meta tags for sharing
-  document.title = `${card.name} - Arcs Arsenal`;
+  document.title = `${displayName} - Arcs Arsenal`;
   const ogTitle = document.querySelector('meta[property="og:title"]');
-  if (ogTitle) ogTitle.setAttribute('content', `${card.name} - Arcs Arsenal`);
+  if (ogTitle) ogTitle.setAttribute('content', `${displayName} - Arcs Arsenal`);
   const twitterTitle = document.querySelector('meta[name="twitter:title"]');
-  if (twitterTitle) twitterTitle.setAttribute('content', `${card.name} - Arcs Arsenal`);
-  const desc = `View stats for ${card.name} in Arcs. Win rate: ${card.stats?.winRate?.toFixed(1)}%`;
+  if (twitterTitle) twitterTitle.setAttribute('content', `${displayName} - Arcs Arsenal`);
+  const desc = `View stats for ${displayName} in Arcs. Win rate: ${card.stats?.winRate?.toFixed(1)}%`;
   const ogDesc = document.querySelector('meta[property="og:description"]');
   if (ogDesc) ogDesc.setAttribute('content', desc);
   const twitterDesc = document.querySelector('meta[name="twitter:description"]');
@@ -1690,7 +2054,7 @@ function openModal(card) {
   
   el.modalImg.src = imgUrl || "";
   el.modalImg.alt = card.name;
-  el.modalName.textContent = card.name;
+  el.modalName.textContent = displayName;
   el.modalText.innerHTML = formatCardText(card.text);
   
   const winRate = card.stats?.winRate ?? 0;
@@ -1852,8 +2216,16 @@ function renderGameDetail(game) {
 
 
 function showPlayerProfile(playerName) {
-  // Navigate to player stats tab with the player selected
-  window.location.href = `?tab=playerStats&source=celestial&player=${encodeURIComponent(playerName)}`;
+  // Navigate to player stats tab on the data page with the player selected
+  // Detect if we're on the GitHub Pages live site (has /arcs-arsenal in path)
+  const currentPath = window.location.pathname;
+  let basePath = '';
+  
+  if (currentPath.includes('/arcs-arsenal/')) {
+    basePath = '/arcs-arsenal';
+  }
+  
+  window.location.href = `${basePath}/data?tab=playerStats&source=celestial&player=${encodeURIComponent(playerName)}`;
 }
 
 function showGameDetail(gameId) {
@@ -1945,6 +2317,99 @@ function renderCompareSlots() {
 // ========== UI Wiring ==========
 let refreshCards;
 
+function initializeAllCardFilters() {
+  // Extract unique card types and tags from all cards
+  const types = new Set();
+  const tags = new Set();
+  
+  (appState.allCards || []).forEach(card => {
+    if (card.stats?.type) types.add(card.stats.type);
+    if (Array.isArray(card.tags)) {
+      card.tags.forEach(tag => tags.add(tag));
+    }
+  });
+  
+  // Populate type filter dropdown
+  const typeSelect = document.getElementById('typeFilterSelect');
+  if (typeSelect) {
+    // Clear existing options except the default
+    typeSelect.innerHTML = '<option value="">All Types</option>';
+    const sortedTypes = Array.from(types).sort();
+    sortedTypes.forEach(type => {
+      const option = document.createElement('option');
+      option.value = type;
+      option.textContent = type;
+      typeSelect.appendChild(option);
+    });
+    typeSelect.removeEventListener('change', updateAllCardView);
+    typeSelect.addEventListener('change', updateAllCardView);
+  }
+  
+  // Populate tag filter dropdown
+  const tagSelect = document.getElementById('tagFilterSelect');
+  if (tagSelect) {
+    // Clear existing options except the default
+    tagSelect.innerHTML = '<option value="">All Tags</option>';
+    const sortedTags = Array.from(tags).sort();
+    sortedTags.forEach(tag => {
+      const option = document.createElement('option');
+      option.value = tag;
+      option.textContent = tag;
+      tagSelect.appendChild(option);
+    });
+    tagSelect.removeEventListener('change', updateAllCardView);
+    tagSelect.addEventListener('change', updateAllCardView);
+  }
+  
+  // Wire clear filters button
+  const clearBtn = document.getElementById('clearFilters');
+  if (clearBtn) {
+    clearBtn.removeEventListener('click', clearFiltersHandler);
+    clearBtn.addEventListener('click', clearFiltersHandler);
+  }
+}
+
+function clearFiltersHandler() {
+  const typeSelect = document.getElementById('typeFilterSelect');
+  const tagSelect = document.getElementById('tagFilterSelect');
+  if (typeSelect) typeSelect.value = '';
+  if (tagSelect) tagSelect.value = '';
+  updateAllCardView();
+}
+
+function updateAllCardView() {
+  // Get selected filters from dropdowns
+  const typeSelect = document.getElementById('typeFilterSelect');
+  const tagSelect = document.getElementById('tagFilterSelect');
+  
+  const selectedType = typeSelect ? typeSelect.value : '';
+  const selectedTag = tagSelect ? tagSelect.value : '';
+  
+  // Filter cards based on selections
+  let filteredCards = appState.allCards;
+  
+  if (selectedType) {
+    filteredCards = filteredCards.filter(card => card.stats?.type === selectedType);
+  }
+  
+  if (selectedTag) {
+    filteredCards = filteredCards.filter(card => {
+      return (card.tags || []).includes(selectedTag);
+    });
+  }
+  
+  // Re-render insights and cards with filtered data
+  const metric = el.metric.value;
+  renderInsights(
+    filteredCards.filter(c => c.stats?.type === 'Leader'),
+    filteredCards.filter(c => c.stats?.type === 'Lore'),
+    undefined,
+    metric,
+    filteredCards
+  );
+  renderCards(filteredCards, el.allCards, metric, el.query.value);
+}
+
 function wireUi(state) {
   appState.leaders = state.leaders;
   appState.lore = state.lore;
@@ -1986,6 +2451,7 @@ function wireUi(state) {
       // Show the selected section
       if (tab.dataset.tab === "all") {
         el.allSection.classList.remove("hidden");
+        initializeAllCardFilters();
       } else if (tab.dataset.tab === "leaders") {
         el.leadersSection.classList.remove("hidden");
       } else if (tab.dataset.tab === "lore") {
