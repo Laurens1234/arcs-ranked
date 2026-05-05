@@ -94,6 +94,7 @@ let appState = {
   currentModalCard: null,     // current card in modal
   celestialGames: [],         // array of game objects for Games tab
   leaderboardStats: [],       // array of player stats for leaderboard
+  selectedGame: null,         // currently selected game for detail view
 };
 
 // ========== Utilities ==========
@@ -199,6 +200,8 @@ function getImageUrl(card) {
     .trim()
     .replace(/^leader:\s*/i, "")
     .replace(/^fate:\s*/i, "");
+  // Avoid trying to fetch images for generic placeholder names like "Card"
+  if (normalizeText(lookupName) === 'card') return null;
   if (!lookupName) return null;
 
   const normalizedLookupName = normalizeCardNameForLookup(lookupName);
@@ -552,11 +555,17 @@ function parseCelestialSheet(rows, cardIndex) {
       }
     }
     
-    // Add to games array
+    // Skip games marked as REMOVE_REQUEST
+    if (/remove_request/i.test(modeField)) {
+      continue;
+    }
+
+    // Add to games array (include Mode for later weighting decisions)
     totalGames++;
     games.push({
       gameId,
       time: gamePlayers[0]?.["Time"] || "",
+      mode: modeField,
       players: gamePlayers_,
     });
   }
@@ -586,6 +595,16 @@ function computePlayerLeaderboardStats(games) {
 
   for (const game of games) {
     if (!game.players || !Array.isArray(game.players)) continue;
+    // Determine weight for this game:
+    // - If the game has a winner -> weight = 1
+    // - Else if it's a campaign Act (players have objective) -> weight = 0.33
+    // - Otherwise -> weight = 0 (do not count)
+    const hasWinner = game.players.some((p) => p.isWinner);
+    // Only count Act III campaign games fractionally (Act I/II should not be counted)
+    const isActIII = /Act\s+III/i.test(game.mode || "");
+    const weight = hasWinner ? 1 : (isActIII ? 0.33 : 0);
+
+    if (weight <= 0) continue; // nothing to count for this game
 
     for (const player of game.players) {
       const name = player.name || "Unknown";
@@ -594,8 +613,8 @@ function computePlayerLeaderboardStats(games) {
       }
 
       const stats = playerStats.get(name);
-      stats.games++;
-      if (player.isWinner) {
+      stats.games += weight;
+      if (hasWinner && player.isWinner) {
         stats.wins++;
       }
       stats.winRate = stats.games > 0 ? (stats.wins / stats.games) * 100 : 0;
@@ -1325,17 +1344,21 @@ function renderGames(games, container) {
   container.innerHTML = games.map((game, idx) => {
     const playerRows = game.players.map(p => {
       const sortedCards = sortPlayerCards(p.cards);
-      const cardImages = sortedCards.length > 0 
+        const cardImages = sortedCards.length > 0 
         ? sortedCards.map(card => {
             const imgUrl = getImageUrl(card);
             const isRotated = normalizeText(card.imageClass) === "rotated";
+            const nameNorm = normalizeText(card.name || '');
+            // Do not show placeholder or image for generic 'Card' entries
+            if (nameNorm === 'card') return '';
             return imgUrl 
               ? `<img src="${imgUrl}" alt="${card.name}" data-card="${card.name}" class="game-card-image ${isRotated ? 'rotated' : ''}" loading="lazy" style="cursor: pointer;">` 
               : `<span class="game-card-placeholder" data-card="${card.name}" style="cursor: pointer;">${card.name}</span>`;
           }).join("")
         : '<span style="color:var(--text-muted);font-size:0.9rem">No cards</span>';
       
-      return `<div class="game-player ${p.isWinner ? "game-winner" : ""}"><div class="game-player-header"><span class="game-player-name" data-player="${(p.name || "Unknown").replace(/"/g, '&quot;')}" style="cursor:pointer;text-decoration:underline;">${p.name || "Unknown"}</span><span class="game-player-color" style="color:var(--color-${p.color?.toLowerCase() || 'gray'})">●</span><span class="game-player-power">${p.power} Power</span>${p.objective !== undefined ? `<span class="game-player-objective" style="font-size:0.85rem;color: ${p.campaignResult === 'success' ? 'var(--color-success, #4ade80)' : 'var(--color-failure, #f87171)'};margin-left:0.5rem">Obj: ${p.objective} ${p.campaignResult === 'success' ? '✓' : '✗'}</span>` : ''}${p.isWinner ? '<span class="game-winner-badge">🏆 Winner</span>' : ''}</div><div class="game-player-cards">${cardImages}</div></div>`;
+      const playerColor = getPlayerColorHex(p.color);
+      return `<div class="game-player ${p.isWinner ? "game-winner" : ""}"><div class="game-player-header"><span class="game-player-name player-link" data-player="${(p.name || "Unknown").replace(/"/g, '&quot;')}" style="cursor:pointer;color:${playerColor};">${p.name || "Unknown"}</span><span class="game-player-color" style="color:${playerColor}">●</span><span class="game-player-power">${p.power} Power</span>${p.objective !== undefined ? `<span class="game-player-objective" style="font-size:0.85rem;color: ${p.campaignResult === 'success' ? 'var(--color-success, #4ade80)' : 'var(--color-failure, #f87171)'};margin-left:0.5rem">Obj: ${p.objective} ${p.campaignResult === 'success' ? '✓' : '✗'}</span>` : ''}${p.isWinner ? '<span class="game-winner-badge">🏆 Winner</span>' : ''}</div><div class="game-player-cards">${cardImages}</div></div>`;
     }).join("");
     
     // Format date in international order (DD-MM-YYYY)
@@ -1346,10 +1369,10 @@ function renderGames(games, container) {
       formattedDate = `${day.padStart(2, "0")}-${month.padStart(2, "0")}-${year}`;
     }
     
-    return `<div class="game-card"><div class="game-header"><h3 class="game-title">Game ${game.gameId}</h3><span class="game-timestamp">${formattedDate}</span></div><div class="game-players">${playerRows}</div></div>`;
+    return `<div class="game-card" style="transition:all 0.2s;"><div class="game-header"><h3 class="game-title">Game ${game.gameId}</h3><span class="game-timestamp">${formattedDate}</span></div><div class="game-players">${playerRows}</div></div>`;
   }).join("");
   
-  // Add click handlers to cards and player names
+  // Add click handlers to cards, player names, and game cards
   container.querySelectorAll("[data-card]").forEach(elem => {
     elem.addEventListener("click", () => {
       const name = elem.dataset.card;
@@ -1364,6 +1387,8 @@ function renderGames(games, container) {
       showPlayerProfile(playerName);
     });
   });
+  
+  // Game cards are not clickable anymore (no detailed view on click)
   
   container.querySelectorAll("[data-player]").forEach(elem => {
     elem.addEventListener("click", () => {
@@ -1411,7 +1436,7 @@ function renderLeaderboard(playerStats, container) {
     const textColor = i < 3 ? 'color: black; text-shadow: 0 1px 2px rgba(255,255,255,0.3);' : '';
     html += `
       <div style="display: flex; justify-content: space-between; align-items: center; ${podiumStyle} background: ${medal.bg};">
-        <span style="font-weight: 700; ${textColor}"><span class="leaderboard-player-name" data-player="${(p.name).replace(/"/g, '&quot;')}" style="cursor:pointer;text-decoration:underline;">${medal.medal} ${i + 1}. ${p.name}</span></span>
+        <span style="font-weight: 700; ${textColor}"><span class="leaderboard-player-name player-link" data-player="${(p.name).replace(/"/g, '&quot;')}" style="cursor:pointer;">${medal.medal} ${i + 1}. ${p.name}</span></span>
         <span style="font-weight: 700; ${textColor}">${p.wins} wins</span>
       </div>
     `;
@@ -1431,7 +1456,7 @@ function renderLeaderboard(playerStats, container) {
     const textColor = i < 3 ? 'color: black; text-shadow: 0 1px 2px rgba(255,255,255,0.3);' : '';
     html += `
       <div style="display: flex; justify-content: space-between; align-items: center; ${podiumStyle} background: ${medal.bg};">
-        <span style="font-weight: 700; ${textColor}"><span class="leaderboard-player-name" data-player="${(p.name).replace(/"/g, '&quot;')}" style="cursor:pointer;text-decoration:underline;">${medal.medal} ${i + 1}. ${p.name}</span></span>
+        <span style="font-weight: 700; ${textColor}"><span class="leaderboard-player-name player-link" data-player="${(p.name).replace(/"/g, '&quot;')}" style="cursor:pointer;">${medal.medal} ${i + 1}. ${p.name}</span></span>
         <span style="font-weight: 700; ${textColor}">${p.games} games</span>
       </div>
     `;
@@ -1451,7 +1476,7 @@ function renderLeaderboard(playerStats, container) {
     const textColor = i < 3 ? 'color: black; text-shadow: 0 1px 2px rgba(255,255,255,0.3);' : '';
     html += `
       <div style="display: flex; justify-content: space-between; align-items: center; ${podiumStyle} background: ${medal.bg};">
-        <span style="font-weight: 700; ${textColor}"><span class="leaderboard-player-name" data-player="${(p.name).replace(/"/g, '&quot;')}" style="cursor:pointer;text-decoration:underline;">${medal.medal} ${i + 1}. ${p.name}</span></span>
+        <span style="font-weight: 700; ${textColor}"><span class="leaderboard-player-name player-link" data-player="${(p.name).replace(/"/g, '&quot;')}" style="cursor:pointer;">${medal.medal} ${i + 1}. ${p.name}</span></span>
         <span style="font-weight: 700; ${textColor}">${p.winRate.toFixed(1)}%</span>
       </div>
     `;
@@ -1489,8 +1514,9 @@ function computePlayerStats(playerName, games) {
   const leaderStats = {};
   const opponentStats = {};
   let wins = 0;
+  let countedGames = 0; // games that had a winner and should be counted for win rate
 
-  if (!games) return { playerGames, leaderStats, opponentStats, wins, winRate: 0, totalGames: 0 };
+  if (!games) return { playerGames, leaderStats, opponentStats, wins, winRate: 0, totalGames: 0, countedGames: 0 };
 
   for (const game of games) {
     if (!game.players) continue;
@@ -1498,7 +1524,15 @@ function computePlayerStats(playerName, games) {
     if (!playerInGame) continue;
 
     playerGames.push(game);
-    if (playerInGame.isWinner) wins++;
+    // Determine weight for win-rate counting: winner=1, campaign act=0.33, otherwise=0
+    const hasWinner = game.players.some(p => p.isWinner);
+    // Only count Act III campaign games fractionally (Act I/II should not be counted)
+    const isActIII = /Act\s+III/i.test(game.mode || "");
+    const weight = hasWinner ? 1 : (isActIII ? 0.33 : 0);
+    if (weight > 0) {
+      countedGames += weight;
+      if (hasWinner && playerInGame.isWinner) wins++;
+    }
 
     // Track leaders/fates played (supports both prefix and card.type)
     if (playerInGame.cards) {
@@ -1523,9 +1557,9 @@ function computePlayerStats(playerName, games) {
   }
 
   const totalGames = playerGames.length;
-  const winRate = totalGames > 0 ? ((wins / totalGames) * 100).toFixed(1) : 0;
+  const winRate = countedGames > 0 ? ((wins / countedGames) * 100).toFixed(1) : 0;
 
-  return { playerGames, leaderStats, opponentStats, wins, winRate, totalGames };
+  return { playerGames, leaderStats, opponentStats, wins, winRate, totalGames, countedGames };
 }
 
 function renderPlayerStats(playerName, stats, container) {
@@ -1570,7 +1604,7 @@ function renderPlayerStats(playerName, stats, container) {
 
   if (topLeaders.length > 0) {
     topLeaders.forEach(([leader, count]) => {
-      const percentage = ((count / totalGames) * 100).toFixed(0);
+      // percentage removed by request; show raw counts only
       const leaderCard = appState.allCards.find(
         (c) => normalizeCardNameForLookup(c.name) === normalizeCardNameForLookup(leader)
       );
@@ -1587,7 +1621,7 @@ function renderPlayerStats(playerName, stats, container) {
             ${leaderImgUrl ? `<img src="${leaderImgUrl}" alt="${leader}" loading="lazy" style="width:192px;height:192px;object-fit:contain;border-radius:10px;flex:0 0 auto;">` : ""}
             <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${leader}</span>
           </span>
-          <span style="color: var(--accent); font-weight: 600;">${count}x (${percentage}%)</span>
+          <span style="color: var(--accent); font-weight: 600;">${count}x</span>
         </div>
       `;
     });
@@ -1606,11 +1640,10 @@ function renderPlayerStats(playerName, stats, container) {
 
   if (topOpponents.length > 0) {
     topOpponents.forEach(([opponent, count]) => {
-      const percentage = ((count / totalGames) * 100).toFixed(0);
       html += `
         <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border);">
           <span>${opponent}</span>
-          <span style="color: var(--accent); font-weight: 600;">${count}x (${percentage}%)</span>
+          <span style="color: var(--accent); font-weight: 600;">${count}x</span>
         </div>
       `;
     });
@@ -1719,6 +1752,25 @@ function closeModal() {
   if (twitterImage) twitterImage.setAttribute('content', './favicon.svg');
 }
 
+function getPlayerColorHex(colorName) {
+  const colorMap = {
+    'red': '#e74c3c',
+    'blue': '#3498db',
+    'green': '#2ecc71',
+    'yellow': '#f1c40f',
+    'purple': '#9b59b6',
+    'orange': '#e67e22',
+    'pink': '#ff1493',
+    'teal': '#1abc9c',
+    'white': '#f5f5f5',
+    'black': '#2c3e50',
+    'gray': '#95a5a6'
+  };
+  
+  const normalized = String(colorName ?? '').toLowerCase().trim();
+  return colorMap[normalized] || colorMap['gray'];
+}
+
 function shareCard(card) {
   const url = new URL(window.location);
   url.searchParams.set('card', encodeURIComponent(card.name));
@@ -1729,9 +1781,98 @@ function shareCard(card) {
   });
 }
 
+function renderGameDetail(game) {
+  const container = document.createElement('div');
+  container.style.cssText = 'padding: 2rem; max-width: 900px; margin: 0 auto;';
+  
+  // Format date
+  let formattedDate = "—";
+  if (game.time) {
+    const datePart = game.time.split(" ")[0];
+    const [month, day, year] = datePart.split("/");
+    formattedDate = `${day.padStart(2, "0")}-${month.padStart(2, "0")}-${year}`;
+  }
+  
+  // Build player details HTML
+  const playerDetails = game.players.map(p => {
+    const playerColor = getPlayerColorHex(p.color);
+    const cardsList = p.cards.map(c => `<div style="padding: 4px 8px; background: rgba(255,255,255,0.05); border-radius: 4px; font-size: 0.9rem;">${c.name || c}</div>`).join('');
+    
+    return `
+      <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 1.5rem; margin-bottom: 1rem;">
+        <div style="display: flex; align-items: center; gap: 1rem; margin-bottom: 1rem;">
+          <span style="font-size: 1.2rem; font-weight: bold; color: ${playerColor};">${p.name || "Unknown"}</span>
+          <span style="color: ${playerColor}; font-size: 1.5rem;">●</span>
+          <span>${p.color}</span>
+          ${p.isWinner ? '<span style="background: gold; color: black; padding: 4px 12px; border-radius: 4px; font-weight: bold;">🏆 Winner</span>' : ''}
+        </div>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1rem; margin-bottom: 1rem;">
+          <div style="background: rgba(255,255,255,0.05); padding: 0.75rem; border-radius: 8px;">
+            <div style="color: var(--text-muted); font-size: 0.85rem;">Power</div>
+            <div style="font-size: 1.5rem; font-weight: bold;">${p.power}</div>
+          </div>
+          ${p.objective !== undefined ? `
+            <div style="background: rgba(255,255,255,0.05); padding: 0.75rem; border-radius: 8px;">
+              <div style="color: var(--text-muted); font-size: 0.85rem;">Objective</div>
+              <div style="font-size: 1.5rem; font-weight: bold; color: ${p.campaignResult === 'success' ? '#4ade80' : '#f87171'};">${p.objective} ${p.campaignResult === 'success' ? '✓' : '✗'}</div>
+            </div>
+          ` : ''}
+        </div>
+        <div style="margin-bottom: 1rem;">
+          <div style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 0.5rem;">Cards (${p.cards.length})</div>
+          <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 0.5rem;">${cardsList}</div>
+        </div>
+      </div>
+    `;
+  }).join('');
+  
+  container.innerHTML = `
+    <h1 style="margin-bottom: 0.5rem;">Game ${game.gameId}</h1>
+    <div style="color: var(--text-muted); font-size: 0.95rem; margin-bottom: 2rem;">Date: ${formattedDate} | Time: ${game.time || '—'}</div>
+    ${playerDetails}
+  `;
+  
+  // Show in a modal or replace the games container
+  const gamesContainer = el.gamesContainer;
+  if (gamesContainer) {
+    gamesContainer.innerHTML = '';
+    gamesContainer.appendChild(container);
+    
+    // Add back button
+    const backBtn = document.createElement('button');
+    backBtn.textContent = '← Back to Games';
+    backBtn.style.cssText = 'padding: 10px 20px; margin-bottom: 1rem; cursor: pointer; background: var(--accent); color: white; border: none; border-radius: 4px;';
+    backBtn.addEventListener('click', () => {
+      const gamesTab = document.querySelector("button[data-tab='games']");
+      if (gamesTab) gamesTab.click();
+    });
+    gamesContainer.insertBefore(backBtn, container);
+  }
+}
+
+
 function showPlayerProfile(playerName) {
   // Navigate to player stats tab with the player selected
   window.location.href = `/data?tab=playerStats&source=celestial&player=${encodeURIComponent(playerName)}`;
+}
+
+function showGameDetail(gameId) {
+  // Find the game in the celestialGames array
+  const game = appState.celestialGames.find(g => g.gameId === gameId);
+  if (!game) {
+    alert(`Game ${gameId} not found`);
+    return;
+  }
+  
+  // Switch to gameDetail tab and store the selected game
+  appState.selectedGame = game;
+  const gameDetailTab = document.querySelector("button[data-tab='gameDetail']");
+  if (gameDetailTab) {
+    gameDetailTab.click();
+  } else {
+    // If tab doesn't exist, render the detail view in a modal or container
+    renderGameDetail(game);
+  }
 }
 
 
@@ -2256,21 +2397,35 @@ async function main() {
       }
     }
     
+    // Check for tab URL parameter first
+    const tabParam = urlParams.get('tab');
+    if (tabParam) {
+      const tabButton = document.querySelector(`button[data-tab='${tabParam}']`);
+      if (tabButton) {
+        tabButton.click();
+      }
+    }
+    
     // Check for player URL parameter
     const playerName = urlParams.get('player');
     if (playerName) {
-      // Switch to playerStats tab
-      const playerTab = document.querySelector("button[data-tab='playerStats']");
-      if (playerTab) {
-        playerTab.click();
-      }
-      // Set the player selector value and trigger search after a brief delay
-      setTimeout(() => {
-        if (el.playerSelector) {
-          el.playerSelector.value = decodeURIComponent(playerName);
-          el.playerSelector.dispatchEvent(new Event('input', { bubbles: true }));
+      // If tab param is playerStats (or wasn't specified), load the player
+      if (tabParam === 'playerStats' || !tabParam) {
+        // Ensure we're on the playerStats tab if needed
+        if (!tabParam) {
+          const playerTab = document.querySelector("button[data-tab='playerStats']");
+          if (playerTab) {
+            playerTab.click();
+          }
         }
-      }, 100);
+        // Set the player selector value and trigger search after a brief delay
+        setTimeout(() => {
+          if (el.playerSelector) {
+            el.playerSelector.value = decodeURIComponent(playerName);
+            el.playerSelector.dispatchEvent(new Event('input', { bubbles: true }));
+          }
+        }, 100);
+      }
     }
 
     // Wire up data source toggle
@@ -2283,8 +2438,24 @@ async function main() {
 
     // Ensure initial data source UI/footer is populated (show celestial totals)
     switchDataSource("celestial");
-    // Reflect initial state in URL (playerCount omitted for non-Community sources)
-    updateUrlParams({ tab: 'leaders', source: 'celestial' });
+    // Reflect current tab state in URL (don't override if tab was already set)
+    const currentTab = tabParam || 'leaders';
+    updateUrlParams({ tab: currentTab, source: 'celestial' });
+
+    // After switching data source, re-apply the requested tab and player selection
+    if (tabParam) {
+      const tabButtonAfter = document.querySelector(`button[data-tab='${tabParam}']`);
+      if (tabButtonAfter) tabButtonAfter.click();
+    }
+
+    if (playerName && (tabParam === 'playerStats' || !tabParam)) {
+      setTimeout(() => {
+        if (el.playerSelector) {
+          el.playerSelector.value = decodeURIComponent(playerName);
+          el.playerSelector.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+      }, 200);
+    }
     
     // Configure initial metric options for league data source
     el.metric.querySelector('option[value="winRate"]').disabled = false;

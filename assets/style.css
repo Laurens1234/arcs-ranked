@@ -383,6 +383,19 @@ body.bg-planets {
   background: var(--accent);
 }
 
+/* Player link hover effect */
+.player-link {
+  transition: all 0.2s ease;
+  font-weight: inherit;
+}
+
+.player-link:hover {
+  text-shadow: 0 0 12px currentColor, 0 0 24px currentColor;
+  font-weight: bold;
+  filter: brightness(1.3);
+  letter-spacing: 0.5px;
+}
+
 .select, .search {
   padding: 10px 16px;
   background: var(--bg-solid);
