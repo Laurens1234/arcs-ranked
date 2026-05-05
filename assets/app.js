@@ -1853,7 +1853,7 @@ function renderGameDetail(game) {
 
 function showPlayerProfile(playerName) {
   // Navigate to player stats tab with the player selected
-  window.location.href = `/data?tab=playerStats&source=celestial&player=${encodeURIComponent(playerName)}`;
+  window.location.href = `?tab=playerStats&source=celestial&player=${encodeURIComponent(playerName)}`;
 }
 
 function showGameDetail(gameId) {
