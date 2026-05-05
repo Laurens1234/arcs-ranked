@@ -155,7 +155,7 @@ function formatCardText(text) {
 }
 
 // Update the browser URL to reflect current tab/source/playerCount
-function updateUrlParams({ tab, source, playerCount } = {}) {
+function updateUrlParams({ tab, source, playerCount, player } = {}) {
   try {
     const url = new URL(window.location.href);
     const params = url.searchParams;
@@ -167,6 +167,10 @@ function updateUrlParams({ tab, source, playerCount } = {}) {
     if (source !== undefined) {
       if (source) params.set('source', source);
       else params.delete('source');
+    }
+    if (player !== undefined) {
+      if (player) params.set('player', player);
+      else params.delete('player');
     }
     // If source is explicitly set and it's not Community, ensure playerCount is removed
     if (source !== undefined && source !== 'Community') {
@@ -431,12 +435,20 @@ function parseCelestialSheet(rows, cardIndex) {
   let totalGames = 0;
 
   function resolveCardFromCsvName(csvName) {
-    const normalized = normalizeCardNameForLookup(csvName);
+    let raw = String(csvName ?? "").trim();
+    
+    // Handle IMPERIAL REGENT / OUTLAW face variants
+    if (/IMPERIAL REGENT\s*\/\s*OUTLAW\s*\(face-down\)/i.test(raw)) {
+      raw = "Outlaw";
+    } else if (/IMPERIAL REGENT\s*\/\s*OUTLAW\s*\(face-up\)/i.test(raw)) {
+      raw = "Imperial Regent";
+    }
+    
+    const normalized = normalizeCardNameForLookup(raw);
     const matched = cardIndex?.get(normalized);
     if (matched) {
       return { name: matched.name, type: matched.type };
     }
-    const raw = String(csvName ?? "").trim();
     if (/^leader:/i.test(raw)) {
       return { name: raw.replace(/^leader:\s*/i, ""), type: "Leader" };
     }
@@ -448,30 +460,37 @@ function parseCelestialSheet(rows, cardIndex) {
   
   // Process each game to find winner and their cards
   for (const [gameId, gamePlayers] of gameGroups) {
-    // Find winner (highest power)
+    // Check if this is a campaign game (Act I, Act II, or Act III)
+    const firstPlayer = gamePlayers[0];
+    const modeField = firstPlayer?.["Mode"] || "";
+    const isActIorII = /Act\s+I+$/i.test(modeField) || /Act\s+II$/i.test(modeField);
+    
+    // Find winner (highest power) - but skip for Act I and Act II campaign games
     let winner = null;
     let maxPower = -Infinity;
     
-    for (const player of gamePlayers) {
-      const power = parseInt(player["Power"] ?? "0", 10);
-      if (power > maxPower) {
-        maxPower = power;
-        winner = player;
+    if (!isActIorII) {
+      for (const player of gamePlayers) {
+        const power = parseInt(player["Power"] ?? "0", 10);
+        if (power > maxPower) {
+          maxPower = power;
+          winner = player;
+        }
       }
     }
     
-    if (!winner) continue;
-    
-    // Extract cards from winner's JSON
+    // Extract cards from winner's JSON (only if there is a winner)
     let winnerCards = [];
-    try {
-      const jsonStr = winner["JSON"];
-      if (jsonStr) {
-        const jsonData = JSON.parse(jsonStr);
-        winnerCards = jsonData.cards ?? [];
+    if (winner) {
+      try {
+        const jsonStr = winner["JSON"];
+        if (jsonStr) {
+          const jsonData = JSON.parse(jsonStr);
+          winnerCards = jsonData.cards ?? [];
+        }
+      } catch (e) {
+        console.warn(`Failed to parse JSON for game ${gameId}:`, e);
       }
-    } catch (e) {
-      console.warn(`Failed to parse JSON for game ${gameId}:`, e);
     }
     
     // Build game object with player data
@@ -496,9 +515,14 @@ function parseCelestialSheet(rows, cardIndex) {
         cards: playerCards
           .filter(c => c && c !== "Deck")
           .map(cardName => {
-            const normalized = normalizeCardNameForLookup(cardName);
-            return cardIndex?.get(normalized) || { name: cardName, image: null };
+            const resolved = resolveCardFromCsvName(cardName);
+            const normalized = normalizeCardNameForLookup(resolved.name);
+            return cardIndex?.get(normalized) || { name: resolved.name, image: null };
           }),
+        ...(modeField.match(/Act\s+/i) && {
+          objective: parseInt(player["Objective"] ?? "0", 10),
+          campaignResult: parseInt(player["Objective"] ?? "0", 10) === 0 ? "success" : "failure"
+        })
       });
       
       // All players' cards go into timesPicked
@@ -514,16 +538,18 @@ function parseCelestialSheet(rows, cardIndex) {
       }
     }
     
-    // Winner's cards get a win
-    for (const cardName of winnerCards) {
-      if (!cardName || cardName === "Deck") continue;
+    // Winner's cards get a win (only if there is a winner)
+    if (winner) {
+      for (const cardName of winnerCards) {
+        if (!cardName || cardName === "Deck") continue;
 
-      const resolved = resolveCardFromCsvName(cardName);
-      const normalized = normalizeCardNameForLookup(resolved.name);
-      if (!cardStats.has(normalized)) {
-        cardStats.set(normalized, { name: resolved.name, type: resolved.type, wins: 0, timesPicked: 0 });
+        const resolved = resolveCardFromCsvName(cardName);
+        const normalized = normalizeCardNameForLookup(resolved.name);
+        if (!cardStats.has(normalized)) {
+          cardStats.set(normalized, { name: resolved.name, type: resolved.type, wins: 0, timesPicked: 0 });
+        }
+        cardStats.get(normalized).wins++;
       }
-      cardStats.get(normalized).wins++;
     }
     
     // Add to games array
@@ -1284,7 +1310,7 @@ function renderGames(games, container) {
         const rawName = String(card?.name ?? "").trim();
         const typeNorm = normalizeText(card?.type);
         // Leader or Fate first
-        if (typeNorm === 'leader' || /^leader:/i.test(rawName) || /^fate:/i.test(rawName)) return 0;
+        if (typeNorm === 'leader' || typeNorm === 'fate' || /^leader:/i.test(rawName) || /^fate:/i.test(rawName)) return 0;
         // Lore next
         if (typeNorm === 'lore' || /^lore:/i.test(rawName)) return 1;
         return 2;
@@ -1309,7 +1335,7 @@ function renderGames(games, container) {
           }).join("")
         : '<span style="color:var(--text-muted);font-size:0.9rem">No cards</span>';
       
-      return `<div class="game-player ${p.isWinner ? "game-winner" : ""}"><div class="game-player-header"><span class="game-player-name">${p.name || "Unknown"}</span><span class="game-player-color" style="color:var(--color-${p.color?.toLowerCase() || 'gray'})">●</span><span class="game-player-power">${p.power} Power</span>${p.isWinner ? '<span class="game-winner-badge">🏆 Winner</span>' : ''}</div><div class="game-player-cards">${cardImages}</div></div>`;
+      return `<div class="game-player ${p.isWinner ? "game-winner" : ""}"><div class="game-player-header"><span class="game-player-name" data-player="${(p.name || "Unknown").replace(/"/g, '&quot;')}" style="cursor:pointer;text-decoration:underline;">${p.name || "Unknown"}</span><span class="game-player-color" style="color:var(--color-${p.color?.toLowerCase() || 'gray'})">●</span><span class="game-player-power">${p.power} Power</span>${p.objective !== undefined ? `<span class="game-player-objective" style="font-size:0.85rem;color: ${p.campaignResult === 'success' ? 'var(--color-success, #4ade80)' : 'var(--color-failure, #f87171)'};margin-left:0.5rem">Obj: ${p.objective} ${p.campaignResult === 'success' ? '✓' : '✗'}</span>` : ''}${p.isWinner ? '<span class="game-winner-badge">🏆 Winner</span>' : ''}</div><div class="game-player-cards">${cardImages}</div></div>`;
     }).join("");
     
     // Format date in international order (DD-MM-YYYY)
@@ -1323,12 +1349,26 @@ function renderGames(games, container) {
     return `<div class="game-card"><div class="game-header"><h3 class="game-title">Game ${game.gameId}</h3><span class="game-timestamp">${formattedDate}</span></div><div class="game-players">${playerRows}</div></div>`;
   }).join("");
   
-  // Add click handlers to cards
+  // Add click handlers to cards and player names
   container.querySelectorAll("[data-card]").forEach(elem => {
     elem.addEventListener("click", () => {
       const name = elem.dataset.card;
       const card = appState.allCards.find(c => c.name === name);
       if (card) openModal(card);
+    });
+  });
+  
+  container.querySelectorAll("[data-player]").forEach(elem => {
+    elem.addEventListener("click", () => {
+      const playerName = elem.dataset.player;
+      showPlayerProfile(playerName);
+    });
+  });
+  
+  container.querySelectorAll("[data-player]").forEach(elem => {
+    elem.addEventListener("click", () => {
+      const playerName = elem.dataset.player;
+      showPlayerProfile(playerName);
     });
   });
 }
@@ -1371,7 +1411,7 @@ function renderLeaderboard(playerStats, container) {
     const textColor = i < 3 ? 'color: black; text-shadow: 0 1px 2px rgba(255,255,255,0.3);' : '';
     html += `
       <div style="display: flex; justify-content: space-between; align-items: center; ${podiumStyle} background: ${medal.bg};">
-        <span style="font-weight: 700; ${textColor}">${medal.medal} ${i + 1}. ${p.name}</span>
+        <span style="font-weight: 700; ${textColor}"><span class="leaderboard-player-name" data-player="${(p.name).replace(/"/g, '&quot;')}" style="cursor:pointer;text-decoration:underline;">${medal.medal} ${i + 1}. ${p.name}</span></span>
         <span style="font-weight: 700; ${textColor}">${p.wins} wins</span>
       </div>
     `;
@@ -1391,7 +1431,7 @@ function renderLeaderboard(playerStats, container) {
     const textColor = i < 3 ? 'color: black; text-shadow: 0 1px 2px rgba(255,255,255,0.3);' : '';
     html += `
       <div style="display: flex; justify-content: space-between; align-items: center; ${podiumStyle} background: ${medal.bg};">
-        <span style="font-weight: 700; ${textColor}">${medal.medal} ${i + 1}. ${p.name}</span>
+        <span style="font-weight: 700; ${textColor}"><span class="leaderboard-player-name" data-player="${(p.name).replace(/"/g, '&quot;')}" style="cursor:pointer;text-decoration:underline;">${medal.medal} ${i + 1}. ${p.name}</span></span>
         <span style="font-weight: 700; ${textColor}">${p.games} games</span>
       </div>
     `;
@@ -1411,7 +1451,7 @@ function renderLeaderboard(playerStats, container) {
     const textColor = i < 3 ? 'color: black; text-shadow: 0 1px 2px rgba(255,255,255,0.3);' : '';
     html += `
       <div style="display: flex; justify-content: space-between; align-items: center; ${podiumStyle} background: ${medal.bg};">
-        <span style="font-weight: 700; ${textColor}">${medal.medal} ${i + 1}. ${p.name}</span>
+        <span style="font-weight: 700; ${textColor}"><span class="leaderboard-player-name" data-player="${(p.name).replace(/"/g, '&quot;')}" style="cursor:pointer;text-decoration:underline;">${medal.medal} ${i + 1}. ${p.name}</span></span>
         <span style="font-weight: 700; ${textColor}">${p.winRate.toFixed(1)}%</span>
       </div>
     `;
@@ -1420,6 +1460,14 @@ function renderLeaderboard(playerStats, container) {
 
   html += `</div>`;
   container.innerHTML = html;
+  
+  // Add click handlers to player names
+  container.querySelectorAll(".leaderboard-player-name").forEach(elem => {
+    elem.addEventListener("click", () => {
+      const playerName = elem.dataset.player;
+      showPlayerProfile(playerName);
+    });
+  });
 }
 
 // ========== Player Stats ==========
@@ -1681,6 +1729,12 @@ function shareCard(card) {
   });
 }
 
+function showPlayerProfile(playerName) {
+  // Navigate to player stats tab with the player selected
+  window.location.href = `/data?tab=playerStats&source=celestial&player=${encodeURIComponent(playerName)}`;
+}
+
+
 // ========== Compare Mode ==========
 function toggleCompareMode() {
   appState.compareMode = !appState.compareMode;
@@ -1834,6 +1888,7 @@ function wireUi(state) {
       const query = String(typedName ?? "").trim();
       if (!query) {
         el.playerStatsContainer.innerHTML = `<div style="padding:2rem;text-align:center;color:var(--text-muted)">Search a player to view their stats</div>`;
+        updateUrlParams({ player: null });
         return;
       }
 
@@ -1841,11 +1896,13 @@ function wireUi(state) {
       const matchedName = players.find((p) => normalizeText(p) === normalizeText(query));
       if (!matchedName) {
         el.playerStatsContainer.innerHTML = `<div style="padding:2rem;text-align:center;color:var(--text-muted)">No exact player match yet. Keep typing or select from suggestions.</div>`;
+        updateUrlParams({ player: null });
         return;
       }
 
       const stats = computePlayerStats(matchedName, appState.celestialGames);
       renderPlayerStats(matchedName, stats, el.playerStatsContainer);
+      updateUrlParams({ player: matchedName });
     };
 
     el.playerSelector.addEventListener("input", (e) => handlePlayerSearch(e.target.value));
@@ -2197,6 +2254,23 @@ async function main() {
       if (card) {
         openModal(card);
       }
+    }
+    
+    // Check for player URL parameter
+    const playerName = urlParams.get('player');
+    if (playerName) {
+      // Switch to playerStats tab
+      const playerTab = document.querySelector("button[data-tab='playerStats']");
+      if (playerTab) {
+        playerTab.click();
+      }
+      // Set the player selector value and trigger search after a brief delay
+      setTimeout(() => {
+        if (el.playerSelector) {
+          el.playerSelector.value = decodeURIComponent(playerName);
+          el.playerSelector.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+      }, 100);
     }
 
     // Wire up data source toggle
