@@ -234,6 +234,50 @@
         text-decoration: underline;
       }
 
+      .home-card-about .btn-container {
+        display: inline-block;
+        margin-top: 20px;
+      }
+
+      .home-card-about .kofi-button {
+        display: inline-flex !important;
+        align-items: center;
+        justify-content: center;
+        padding: 8px 20px !important;
+        font-size: 0.85rem !important;
+        font-weight: 600 !important;
+        border: 2px solid var(--accent) !important;
+        border-radius: var(--radius) !important;
+        background: linear-gradient(135deg, var(--accent), var(--purple)) !important;
+        color: #000 !important;
+        box-shadow: none !important;
+        transition: opacity 0.2s, transform 0.15s !important;
+      }
+
+      .home-card-about .kofi-button:hover {
+        opacity: 1 !important;
+        transform: translateY(-2px) scale(1.02) !important;
+        box-shadow: 0 12px 30px rgba(78, 205, 196, 0.12), 0 0 28px var(--accent-glow) !important;
+        color: #000 !important;
+      }
+
+      .home-card-about .kofi-button:active {
+        transform: scale(0.98) !important;
+      }
+
+      .home-card-about .kofi-button .kofitext {
+        color: #000 !important;
+        line-height: 1.2 !important;
+      }
+
+      .home-card-about .kofi-button .kofitext a {
+        color: #000 !important;
+      }
+
+      .home-card-about .kofi-button .kofiimg {
+        margin-bottom: 0 !important;
+      }
+
       .home-card:nth-child(5) {
         animation-delay: 0.4s;
       }
@@ -361,6 +405,8 @@
             <div class="home-card-body">
               <h2 class="home-card-title">About Arcs Arsenal</h2>
               <p class="home-card-desc">A comprehensive toolkit for Arcs players, built by Laurens. Explore data-driven insights, optimize your strategies and discover new ways to enjoy the game.</p>
+              <script type='text/javascript' src='https://storage.ko-fi.com/cdn/widget/Widget_2.js'></script>
+              <script type='text/javascript'>kofiwidget2.init('Support me on Ko-fi', '#72a4f2', 'K3K61YUXCB');kofiwidget2.draw();</script>
             </div>
           </div>
         </div>

@@ -1,20 +1,22 @@
 #!/usr/bin/env python3
 """
-Dice Image Splitter
-Splits 3x3 dice face grids into individual face images
+Image Splitter
+Splits images in grid to individual
 """
 
 import os
 
 from PIL import Image
 
+image_width = 7
+image_col = 5
 
-def split_dice_image(image_path, output_dir):
+def split_image(image_path, output_dir):
     """
-    Split a 2x7 dice image into 14 individual face images
+    Split a nxn image into n individual images
 
     Args:
-        image_path: Path to the dice image
+        image_path: Path to the image
         output_dir: Directory to save the split images
     """
     # Open the image
@@ -24,8 +26,8 @@ def split_dice_image(image_path, output_dir):
     width, height = img.size
 
     # Calculate piece dimensions
-    piece_width = width // 7
-    piece_height = height // 7
+    piece_width = width // image_width
+    piece_height = height // image_col
 
     # Get the base filename without extension
     base_name = os.path.splitext(os.path.basename(image_path))[0]
@@ -33,8 +35,8 @@ def split_dice_image(image_path, output_dir):
     # Create output directory if it doesn't exist
     os.makedirs(output_dir, exist_ok=True)
 
-    for row in range(7):
-        for col in range(7):
+    for row in range(image_col):
+        for col in range(image_width):
             # Calculate crop coordinates
             left = col * piece_width
             top = row * piece_height
@@ -56,23 +58,23 @@ def main():
     input_dir = "CardImages/"
     output_dir = "CardImages"
 
-    # Dice image files
-    dice_files = [
-        "Scavengers_Scouts_Court_Deck_Unofficial_art.png"
+    # image files
+    files = [
+        "Believer_cards.jpg"
     ]
 
-    print("Splitting dice images into individual faces...")
+    print("Splitting images into individual faces...")
 
-    for dice_file in dice_files:
-        image_path = os.path.join(input_dir, dice_file)
+    for file in files:
+        image_path = os.path.join(input_dir, file)
         if os.path.exists(image_path):
-            print(f"\nProcessing: {dice_file}")
-            split_dice_image(image_path, output_dir)
+            print(f"\nProcessing: {file}")
+            split_image(image_path, output_dir)
         else:
             print(f"Warning: {image_path} not found")
 
-    print("\nDone! Check the 'dice/faces' directory for the split images.")
-    print("\nNaming convention: {die_type}_r{row}_c{col}.png")
+    print("\nDone! Check the  directory for the split images.")
+    print("\nNaming convention: {type}_r{row}_c{col}.png")
     print("- r0 = top row, r1 = bottom row")
     print("- c0-c6 = left to right columns")
 
