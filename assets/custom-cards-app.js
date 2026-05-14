@@ -5,6 +5,8 @@ const BRANCH = "main";
 const LEADERS_PATH = "results/leader";
 const LORE_PATH = "results/lore";
 const COURT_PATHS = ["results/guild", "results/vox"];
+const DOOM_AND_DIVINITY_PATH = "results/doom_and_divinity/guild";
+const DOOM_AND_DIVINITY_VOX_PATH = "results/doom_and_divinity/vox";
 
 const RAW_BASE = `https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/${BRANCH}`;
 
@@ -123,6 +125,7 @@ const el = {
 // ========== State ==========
 let allCards = [];
 let courtCards = [];
+let doomDivinityCards = [];
 let activeTab = "leaders";
 let selectMode = false;
 let selectedCards = new Set(); // stores card imageUrl as unique key
@@ -181,9 +184,10 @@ function nameFromFile(filename, type) {
   return name.replace(/_/g, " ");
 }
 
-function filenameFromName(name, type) {
-  // Keep all letters, numbers, spaces, and underscores from the name; remove all other characters
-  let s = String(name || "").replace(/[^A-Za-z0-9_ ]/g, "");
+function filenameFromName(name, type, { preserveApostrophes = false } = {}) {
+  // Keep all letters, numbers, spaces, underscores, and optionally apostrophes from the name; remove all other characters
+  const allowed = preserveApostrophes ? /[^A-Za-z0-9_' ]/g : /[^A-Za-z0-9_ ]/g;
+  let s = String(name || "").replace(allowed, "");
   if (type === "Lore") return `${s}_Lore_Card.png`;
   if (type === "Guild") return `${s}_Guild_Card.png`;
   if (type === "Vox") return `${s}_Vox_Card.png`;
@@ -219,9 +223,9 @@ function generateFilenameCandidates(name, type) {
   return [...new Set(out)];
 }
 
-async function findExistingImageUrl(folderPath, name, type) {
-  const filename = filenameFromName(name, type);
-  const url = `${RAW_BASE}/${folderPath}/${encodeURIComponent(filename)}`;
+async function findExistingImageUrl(folderPath, name, type, options = {}) {
+  const filename = filenameFromName(name, type, options);
+  const url = `${RAW_BASE}/${folderPath}/${encodeURIComponent(filename).replace(/%27/g, "'")}`;
   return { url, filename };
 }
 
@@ -234,6 +238,8 @@ async function loadCards() {
     const parsedLore = await loadYamlListFor('lore');
     const parsedGuild = await loadYamlListFor('guild');
     const parsedVox = await loadYamlListFor('vox');
+    const parsedDoomGuild = await loadYamlListFor('doom_and_divinity');
+    const parsedDoomVox = await loadYamlListFor('doom_and_divinity_vox');
 
     // Update lightbox/details now that metadata is available
     if (activeTab === "leaders" && !el.lightbox.classList.contains("hidden") && currentLightboxCard) {
@@ -301,6 +307,42 @@ async function loadCards() {
 
     courtCards = [...guild, ...vox].sort((a, b) => a.name.localeCompare(b.name));
 
+    const doomGuildPromises = (Array.isArray(parsedDoomGuild) ? parsedDoomGuild : []).map(async (p) => {
+      const found = await findExistingImageUrl(DOOM_AND_DIVINITY_PATH, p.name, "Guild", { preserveApostrophes: true });
+      return {
+        name: p.name,
+        type: "Guild",
+        filename: found.filename,
+        imageUrl: found.url,
+        abilities: p.body || p.abilities || "",
+        resources: Array.isArray(p.resources)
+          ? p.resources.map(r => stripMarkdownForCharCount(String(r)).toLowerCase()).filter(Boolean)
+          : (p.resources ? [stripMarkdownForCharCount(String(p.resources)).toLowerCase()] : []),
+      };
+    });
+
+    const doomVoxPromises = (Array.isArray(parsedDoomVox) ? parsedDoomVox : []).map(async (p) => {
+      const found = await findExistingImageUrl(DOOM_AND_DIVINITY_VOX_PATH, p.name, "Vox", { preserveApostrophes: true });
+      return {
+        name: p.name,
+        type: "Vox",
+        filename: found.filename,
+        imageUrl: found.url,
+        abilities: p.body || p.abilities || "",
+        resources: Array.isArray(p.resources)
+          ? p.resources.map(r => stripMarkdownForCharCount(String(r)).toLowerCase()).filter(Boolean)
+          : (p.resources ? [stripMarkdownForCharCount(String(p.resources)).toLowerCase()] : []),
+      };
+    });
+
+    const doomGuild = await Promise.all(doomGuildPromises);
+    const doomVox = await Promise.all(doomVoxPromises);
+
+    doomDivinityCards = [...doomGuild, ...doomVox].map((card) => ({
+      ...card,
+      _printSize: "lore",
+    }));
+
     // The leaders tab should only include true leaders (not guild/vox)
     // Sort leaders by their order in leaders.yml, not alphabetically
     // Find the order for each leader using leaderOrderByName (set after loadLeaderMetadata)
@@ -324,6 +366,10 @@ async function loadCards() {
     const cardFromUrl = getUrlCardName();
     if (cardFromUrl) {
       let target = allCards.find((c) => normalizeName(c.name) === normalizeName(cardFromUrl));
+      if (!target) {
+        target = doomDivinityCards.find((c) => normalizeName(c.name) === normalizeName(cardFromUrl));
+        if (target) activeTab = "doomDivinity";
+      }
       if (!target) {
         target = courtCards.find((c) => normalizeName(c.name) === normalizeName(cardFromUrl));
         if (target) activeTab = "court";
@@ -943,7 +989,7 @@ function updateSetupDropdownOptionsAndCounts() {
 // ========== Rendering ==========
 function getFilteredCards({ ignoreDraft = false } = {}) {
   // Base set: use courtCards if the court tab is active, otherwise use allCards
-  let cards = activeTab === "court" ? courtCards : allCards;
+  let cards = activeTab === "court" ? courtCards : activeTab === "doomDivinity" ? doomDivinityCards : allCards;
 
   // Tab filter for non-court tabs
   if (activeTab === "leaders") {
@@ -977,6 +1023,10 @@ function getFilteredCards({ ignoreDraft = false } = {}) {
         return res.some(x => String(x).toLowerCase() === String(r).toLowerCase());
       });
     }
+  }
+
+  if (activeTab === "doomDivinity") {
+    cards = cards.filter((c) => c.type === "Guild" || c.type === "Vox");
   }
 
   // Search filter
@@ -1381,10 +1431,16 @@ function printCards() {
   const PAGE_CONTENT_WIDTH_MM = 186;
   const PAGE_CONTENT_HEIGHT_MM = 263;
 
-  const backImageUrl = `${RAW_BASE}/cardAssets/CardAssets-Tarot-Leader-No-Bleed.png`;
+  const leaderBackImageUrl = `${RAW_BASE}/cardAssets/CardAssets-Tarot-Leader-No-Bleed.png`;
+  const courtBackImageUrl = `${RAW_BASE}/cardAssets/CardAsset-Back-Court.png`;
 
-  const widthMmForCard = (card) => (card.type === "Lore" ? 63 : 70);
-  const heightMmForCard = (card) => (card.type === "Lore" ? 88 : 120);
+  function getPrintSizeKey(card) {
+    if (card && card._printSize) return card._printSize;
+    return card && card.type === "Lore" ? "lore" : "leader";
+  }
+
+  const widthMmForCard = (card) => (getPrintSizeKey(card) === "lore" ? 63 : 70);
+  const heightMmForCard = (card) => (getPrintSizeKey(card) === "lore" ? 88 : 120);
 
   // No special single-card scaling: cards render using the standard sizes.
 
@@ -1397,7 +1453,7 @@ function printCards() {
     for (const card of cardList) {
       const w = widthMmForCard(card);
       // Don't mix card sizes in the same row; shared cut lines won't align otherwise.
-      if (currentRow.length > 0 && currentRow[0]?.type !== card.type) {
+      if (currentRow.length > 0 && getPrintSizeKey(currentRow[0]) !== getPrintSizeKey(card)) {
         rows.push(currentRow);
         currentRow = [];
         currentWidth = 0;
@@ -1456,13 +1512,13 @@ function printCards() {
 
         rowCards.forEach((card, colIndex) => {
           const div = document.createElement("div");
-          const isLeader = card.type !== "Lore";
+          const isLoreSized = getPrintSizeKey(card) === "lore";
           const isFirstCol = colIndex === 0;
           const isLastCol = colIndex === rowCards.length - 1;
 
           div.className = [
             "print-card",
-            isLeader ? "print-card-leader" : "print-card-lore",
+            isLoreSized ? "print-card-lore" : "print-card-leader",
             isFirstCol ? "cut-left" : "",
             isFirstRowOfPage ? "cut-top" : "",
             isLastCol ? "cut-right" : "",
@@ -1539,11 +1595,14 @@ function printCards() {
   let backPages = [];
   if (leaderCount > 0) {
     // Create placeholder "cards" so we can reuse the same layout logic.
-    const backCards = Array.from({ length: leaderCount }, () => ({
-      type: "Leader",
-      imageUrl: backImageUrl,
-      name: "Leader back",
-    }));
+    const backCards = cards
+      .filter((c) => c.type !== "Lore" && !c._isPlaceholder)
+      .map((card) => ({
+        type: "Leader",
+        imageUrl: card.type === "Leader" ? leaderBackImageUrl : courtBackImageUrl,
+        name: "Leader back",
+        _printSize: getPrintSizeKey(card),
+      }));
     backPages = paginateRows(buildRows(backCards));
   }
 
@@ -1681,7 +1740,7 @@ function init() {
 
   // Read tab from URL if present and valid
   const initialUrlTab = getUrlTab();
-  const validTabs = ["leaders", "lore", "court", "all"];
+  const validTabs = ["leaders", "lore", "court", "doomDivinity", "all"];
   if (initialUrlTab && validTabs.includes(initialUrlTab)) {
     activeTab = initialUrlTab;
     // update active class on tab buttons
