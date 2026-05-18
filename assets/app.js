@@ -2641,7 +2641,8 @@ function switchDataSource(source, playerCount) {
     leaders = appState.celestialCards.leaders;
     lore = appState.celestialCards.lore;
     games = appState.celestialCards.games;
-    appState.celestialGames = appState.celestialCards.gamesArray || [];
+    // Show newest games first (reverse chronological)
+    appState.celestialGames = (appState.celestialCards.gamesArray || []).slice().reverse();
     appState.leaderboardStats = computePlayerLeaderboardStats(appState.celestialGames);
     allCards = [...leaders, ...lore, ...(appState.celestialCards.others || [])];
     if (el.dataSourceLabel) {
